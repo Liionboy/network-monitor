@@ -21,6 +21,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from dotenv import load_dotenv
+load_dotenv()
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("netmon")
 
@@ -186,10 +189,17 @@ def send_alert_email(subject: str, body: str):
         msg["Subject"] = subject
         msg["From"] = SMTP_USER
         msg["To"] = ALERT_EMAIL
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_USER, [ALERT_EMAIL], msg.as_string())
+        if SMTP_PORT == 465:
+            # Implicit TLS (SMTPS)
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(SMTP_USER, [ALERT_EMAIL], msg.as_string())
+        else:
+            # STARTTLS
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                server.starttls()
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(SMTP_USER, [ALERT_EMAIL], msg.as_string())
         logger.info(f"Alert email sent to {ALERT_EMAIL}")
     except Exception as e:
         logger.error(f"Failed to send alert email: {e}")
