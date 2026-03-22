@@ -29,6 +29,13 @@ DB_PATH = Path(os.environ.get("DB_PATH", str(BASE_DIR / "monitor.db")))
 SESSIONS: dict[str, dict] = {}  # token -> {user_id, username, role, expires}
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "20"))
 
+# Email alerting config
+SMTP_HOST = os.environ.get("NETMON_SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("NETMON_SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("NETMON_SMTP_USER", "")
+SMTP_PASS = os.environ.get("NETMON_SMTP_PASS", "")
+ALERT_EMAIL = os.environ.get("NETMON_ALERT_EMAIL", "")
+
 # ─── Models ─────────────────────────────────────────────────────────
 
 class ServerIn(BaseModel):
@@ -170,6 +177,24 @@ monitor_task = None
 
 # ─── Alerting ───────────────────────────────────────────────────────
 
+def send_alert_email(subject: str, body: str):
+    """Send alert email if SMTP is configured."""
+    if not all([SMTP_HOST, SMTP_USER, SMTP_PASS, ALERT_EMAIL]):
+        return
+    try:
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_USER
+        msg["To"] = ALERT_EMAIL
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(SMTP_USER, [ALERT_EMAIL], msg.as_string())
+        logger.info(f"Alert email sent to {ALERT_EMAIL}")
+    except Exception as e:
+        logger.error(f"Failed to send alert email: {e}")
+
+
 def check_alerts(server_id: int, server_name: str, metrics: dict):
     """Check alert rules and trigger if thresholds exceeded."""
     db = get_db()
@@ -190,6 +215,11 @@ def check_alerts(server_id: int, server_name: str, metrics: dict):
                        (server_id, rule_id, msg, "warning", now))
             db.execute("UPDATE alert_rules SET last_triggered=? WHERE id=?", (now, rule_id))
             db.commit()
+            # Send email
+            send_alert_email(
+                subject=f"[Network Monitor] Alert: {server_name} - {metric}",
+                body=f"Server: {server_name}\nMetric: {metric}\nCurrent value: {value}\nThreshold: {threshold}\n\nTime: {datetime.fromtimestamp(now).isoformat()}"
+            )
     db.close()
 
 # ─── Check functions ────────────────────────────────────────────────

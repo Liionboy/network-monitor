@@ -60,7 +60,7 @@ python3 server.py
 For SSH checks, you need SSH access to the target server.
 
 ### Using SSH key (recommended)
-- Set **SSH User** (e.g., `root`, `adrian`)
+- Set **SSH User** (e.g., `root`, `ubuntu`)
 - Set **Private Key Path** (e.g., `~/.ssh/id_rsa`)
 - Leave Password empty
 
@@ -88,6 +88,39 @@ Full Swagger/OpenAPI docs available at `/docs` when the server is running.
 | `WS` | `/ws` | Real-time updates |
 
 All endpoints (except `/api/login`, `/api/health`, and `/docs`) require an `x-session` header with a valid token.
+
+## Changing Password
+
+The default admin password is `admin`. To change it:
+
+```bash
+# Generate a bcrypt hash
+python3 -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_NEW_PASSWORD', bcrypt.gensalt()).decode())"
+
+# Update in database
+sqlite3 monitor.db "UPDATE users SET password_hash='PASTE_HASH_HERE' WHERE username='admin';"
+```
+
+Or change via the **Users** tab in the dashboard (admin only).
+
+## Email Alerting
+
+To receive email alerts when thresholds are exceeded:
+
+1. Create alert rules in the dashboard (Alerts tab → Add rule)
+2. Set SMTP environment variables:
+
+```bash
+export NETMON_SMTP_HOST=smtp.gmail.com
+export NETMON_SMTP_PORT=587
+export NETMON_SMTP_USER=your@email.com
+export NETMON_SMTP_PASS=your_app_password
+export NETMON_ALERT_EMAIL=recipient@email.com
+```
+
+3. Restart the server
+
+For Gmail, use an [App Password](https://myaccount.google.com/apppasswords).
 
 ## Systemd Service (auto-start on boot)
 
