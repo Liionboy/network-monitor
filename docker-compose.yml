@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  network-monitor:
+    build: .
+    container_name: network-monitor
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      - NETMON_USER=admin
+      - NETMON_PASS=netmon2026
+      - NETMON_PORT=8765
+    volumes:
+      - monitor-data:/app/data
+      - ${HOME}/.ssh:/root/.ssh:ro
+
+volumes:
+  monitor-data:

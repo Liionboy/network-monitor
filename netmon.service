@@ -1,0 +1,16 @@
+[Unit]
+Description=Network Monitor Dashboard
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/adrian/.openclaw/workspace/network-monitor
+ExecStart=/usr/bin/python3 server.py
+Restart=always
+RestartSec=5
+Environment=NETMON_USER=admin
+Environment=NETMON_PASS=netmon2026
+Environment=NETMON_PORT=8765
+
+[Install]
+WantedBy=default.target

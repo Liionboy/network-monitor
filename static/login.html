@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login — Network Monitor</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Inter,sans-serif;background:#0b1020;color:#eef2ff;display:flex;align-items:center;justify-content:center;min-height:100vh}
+    .box{background:#11182b;border:1px solid #24304d;border-radius:18px;padding:40px;width:min(380px,90%);text-align:center}
+    .box h1{font-size:22px;margin-bottom:6px}
+    .box p{color:#94a3b8;font-size:14px;margin-bottom:28px}
+    .f{margin-bottom:16px;text-align:left}
+    .f label{display:block;font-size:13px;color:#cbd5e1;margin-bottom:6px}
+    .f input{width:100%;background:#0f1527;border:1px solid #2a3654;border-radius:10px;padding:12px;color:#eef2ff;font-size:15px}
+    .f input:focus{outline:none;border-color:#3b82f6}
+    .btn{width:100%;background:#3b82f6;color:#fff;border:0;border-radius:10px;padding:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:8px}
+    .btn:hover{background:#2563eb}
+    .btn:disabled{opacity:.5;cursor:default}
+    .err{color:#fca5a5;font-size:13px;margin-top:12px;display:none}
+  </style>
+</head>
+<body>
+  <div class="box">
+    <svg width="48" height="48" viewBox="0 0 32 32" style="margin-bottom:8px">
+      <rect width="32" height="32" rx="6" fill="#0f1527"/>
+      <circle cx="16" cy="16" r="4" fill="#3b82f6"/>
+      <circle cx="16" cy="16" r="8" fill="none" stroke="#3b82f6" stroke-width="1.5" opacity=".5"/>
+      <circle cx="16" cy="16" r="12" fill="none" stroke="#3b82f6" stroke-width="1" opacity=".3"/>
+      <circle cx="8" cy="8" r="2.5" fill="#22c55e"/>
+      <circle cx="24" cy="8" r="2.5" fill="#22c55e"/>
+      <circle cx="24" cy="24" r="2.5" fill="#ef4444"/>
+      <circle cx="8" cy="24" r="2.5" fill="#22c55e"/>
+      <line x1="8" y1="8" x2="16" y2="16" stroke="#3b82f6" stroke-width="1" opacity=".4"/>
+      <line x1="24" y1="8" x2="16" y2="16" stroke="#3b82f6" stroke-width="1" opacity=".4"/>
+      <line x1="24" y1="24" x2="16" y2="16" stroke="#3b82f6" stroke-width="1" opacity=".4"/>
+      <line x1="8" y1="24" x2="16" y2="16" stroke="#3b82f6" stroke-width="1" opacity=".4"/>
+    </svg>
+    <h1>Network Monitor</h1>
+    <p>Sign in to continue</p>
+    <form id="f">
+      <div class="f"><label>Username</label><input id="u" autocomplete="username" required /></div>
+      <div class="f"><label>Password</label><input id="p" type="password" autocomplete="current-password" required /></div>
+      <button class="btn" type="submit">Login</button>
+      <div class="err" id="e"></div>
+    </form>
+  </div>
+  <script>
+    // If already logged in, go straight to dashboard
+    if (localStorage.getItem('netmon_token')) location.href = '/';
+    document.getElementById('f').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const btn = ev.target.querySelector('.btn');
+      const err = document.getElementById('e');
+      btn.disabled = true; err.style.display = 'none';
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({username: document.getElementById('u').value, password: document.getElementById('p').value})
+        });
+        if (res.ok) {
+          const data = await res.json();
+          localStorage.setItem('netmon_token', data.token);
+          location.href = '/';
+        } else {
+          err.textContent = 'Invalid username or password.';
+          err.style.display = 'block';
+        }
+      } catch(ex) {
+        err.textContent = 'Connection error.';
+        err.style.display = 'block';
+      }
+      btn.disabled = false;
+    });
+  </script>
+</body>
+</html>

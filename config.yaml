@@ -1,0 +1,90 @@
+# Network Monitor Configuration
+# Add your servers and services here
+
+settings:
+  check_interval: 30  # seconds between checks
+  history_hours: 24   # how long to keep history
+  port: 8765          # web UI port
+
+servers:
+  - name: "homedockos"
+    host: "192.168.1.234"
+    type: "ssh"
+    ssh_user: "adrian"
+    ssh_key: "~/.ssh/id_ed25519_servers"
+    services:
+      - name: "OpenClaw Gateway"
+        type: "process"
+        process: "openclaw"
+
+  - name: "ollama-server"
+    host: "192.168.1.228"
+    type: "ssh"
+    ssh_user: "adrian"
+    ssh_key: "~/.ssh/id_ed25519_servers"
+    services:
+      - name: "Ollama API"
+        type: "http"
+        url: "http://192.168.1.228:11434/api/version"
+
+  - name: "DockerHome"
+    host: "192.168.1.79"
+    type: "ssh"
+    ssh_user: "adrian"
+    ssh_key: "~/.ssh/id_ed25519_servers"
+    services:
+      - name: "Docker"
+        type: "process"
+        process: "dockerd"
+      - name: "Draw.io"
+        type: "http"
+        url: "http://192.168.1.79:8080"
+
+  - name: "Nextcloud"
+    host: "192.168.1.9"
+    type: "ssh"
+    ssh_user: "adrian"
+    ssh_key: "~/.ssh/id_ed25519_servers"
+    services:
+      - name: "Nginx"
+        type: "process"
+        process: "nginx"
+      - name: "Nextcloud Web"
+        type: "http"
+        url: "http://192.168.1.9"
+
+  - name: "PlexServer"
+    host: "192.168.1.168"
+    type: "ssh"
+    ssh_user: "adrian"
+    ssh_key: "~/.ssh/id_ed25519_servers"
+    services:
+      - name: "Plex"
+        type: "http"
+        url: "http://192.168.1.168:32400/web"
+
+  - name: "oracle-db"
+    host: "192.168.1.86"
+    type: "ssh"
+    ssh_user: "adrian"
+    ssh_key: "~/.ssh/id_ed25519_servers"
+    services:
+      - name: "Oracle Listener"
+        type: "tcp"
+        port: 1521
+
+  - name: "Home Assistant"
+    host: "homelocal.xyz"
+    type: "http_only"
+    services:
+      - name: "HA Web"
+        type: "http"
+        url: "https://homelocal.xyz"
+
+  - name: "Docmost"
+    host: "docmost.homelocal.work"
+    type: "http_only"
+    services:
+      - name: "Docmost Web"
+        type: "http"
+        url: "https://docmost.homelocal.work"

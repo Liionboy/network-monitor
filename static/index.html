@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Network Monitor</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="logo">
+        <svg class="logo-icon" width="32" height="32" viewBox="0 0 32 32">
+          <rect width="32" height="32" rx="6" fill="#0f1527"/>
+          <circle cx="16" cy="16" r="4" fill="#3b82f6"/>
+          <circle cx="16" cy="16" r="8" fill="none" stroke="#3b82f6" stroke-width="1.5" opacity=".5"/>
+          <circle cx="16" cy="16" r="12" fill="none" stroke="#3b82f6" stroke-width="1" opacity=".3"/>
+          <circle cx="8" cy="8" r="2.5" fill="#22c55e"/>
+          <circle cx="24" cy="8" r="2.5" fill="#22c55e"/>
+          <circle cx="24" cy="24" r="2.5" fill="#ef4444"/>
+          <circle cx="8" cy="24" r="2.5" fill="#22c55e"/>
+          <line x1="8" y1="8" x2="16" y2="16" stroke="#3b82f6" stroke-width="1" opacity=".4"/>
+          <line x1="24" y1="8" x2="16" y2="16" stroke="#3b82f6" stroke-width="1" opacity=".4"/>
+          <line x1="24" y1="24" x2="16" y2="16" stroke="#3b82f6" stroke-width="1" opacity=".4"/>
+          <line x1="8" y1="24" x2="16" y2="16" stroke="#3b82f6" stroke-width="1" opacity=".4"/>
+        </svg>
+        <h1>Network Monitor</h1>
+      </div>
+      <div class="header-actions">
+        <nav class="nav-tabs">
+          <button class="nav-tab active" onclick="switchTab('dashboard')">Dashboard</button>
+          <button class="nav-tab" onclick="switchTab('alerts')">Alerts</button>
+          <button class="nav-tab" onclick="switchTab('users')">Users</button>
+        </nav>
+        <button class="primary-btn" onclick="openServerModal()">+ Add server</button>
+        <div class="connection-status" id="ws-status"><span class="dot"></span><span class="label">Connecting...</span></div>
+        <a href="javascript:logout()" class="logout-btn">Logout</a>
+      </div>
+    </header>
+
+    <!-- Dashboard Tab -->
+    <main class="layout" id="tab-dashboard">
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Dashboard</h2>
+          <span id="last-update">--:--:--</span>
+        </div>
+        <div class="stats-row" id="stats-row"></div>
+        <div class="servers-grid" id="servers-grid"></div>
+      </section>
+      <aside class="panel side-panel">
+        <div class="panel-header"><h2>Servers</h2></div>
+        <div id="server-list"></div>
+      </aside>
+    </main>
+
+    <!-- Alerts Tab -->
+    <main class="layout hidden" id="tab-alerts">
+      <section class="panel" style="grid-column:1/-1">
+        <div class="panel-header"><h2>Alert Rules</h2>
+          <button class="primary-btn" onclick="openAlertModal()">+ Add rule</button>
+        </div>
+        <div id="alert-rules-list"></div>
+      </section>
+      <section class="panel" style="grid-column:1/-1">
+        <div class="panel-header"><h2>Alert History</h2></div>
+        <div id="alert-log-list"></div>
+      </section>
+    </main>
+
+    <!-- Users Tab -->
+    <main class="layout hidden" id="tab-users">
+      <section class="panel" style="grid-column:1/-1;max-width:600px">
+        <div class="panel-header"><h2>Users</h2>
+          <button class="primary-btn" onclick="openUserModal()">+ Add user</button>
+        </div>
+        <div id="users-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Server Modal -->
+  <div class="modal-overlay" id="server-modal-overlay">
+    <div class="modal form-modal">
+      <div class="modal-header">
+        <h2 id="server-modal-title">Add server</h2>
+        <button class="modal-close" onclick="closeServerModal()">&times;</button>
+      </div>
+      <form class="modal-body form-grid" id="server-form">
+        <input type="hidden" id="server-id" />
+        <label><span>Name *</span><input id="f-name" required placeholder="My Server" /></label>
+        <label><span>Host / IP *</span><input id="f-host" required placeholder="192.168.1.10 or server.com" /></label>
+        <label><span>Check type</span>
+          <select id="f-check-type" onchange="toggleCheckFields()">
+            <option value="host">Host reachability</option>
+            <option value="http">HTTP</option>
+            <option value="https">HTTPS</option>
+            <option value="tcp">TCP port</option>
+            <option value="ssh">SSH (with metrics)</option>
+          </select>
+        </label>
+        <label id="target-wrap" class="hidden"><span>Custom URL</span><input id="f-target" placeholder="https://example.com/health" /></label>
+        <label id="port-wrap" class="hidden"><span>Port</span><input id="f-port" type="number" min="1" max="65535" /></label>
+        <div id="ssh-fields" class="hidden">
+          <div class="section-title">SSH Authentication</div>
+          <label><span>SSH User</span><input id="f-ssh-user" placeholder="root" /></label>
+          <label><span>Private Key Path</span><input id="f-ssh-key" placeholder="~/.ssh/id_rsa" /></label>
+          <label><span>Password (if no key)</span><input id="f-ssh-password" type="password" placeholder="Optional" /></label>
+        </div>
+        <label class="checkbox-row"><input id="f-enabled" type="checkbox" checked /> <span>Enabled</span></label>
+        <div class="form-actions">
+          <button type="submit" class="primary-btn">Save</button>
+          <button type="button" class="secondary-btn" onclick="closeServerModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Alert Rule Modal -->
+  <div class="modal-overlay" id="alert-modal-overlay">
+    <div class="modal form-modal">
+      <div class="modal-header">
+        <h2>Add alert rule</h2>
+        <button class="modal-close" onclick="closeAlertModal()">&times;</button>
+      </div>
+      <form class="modal-body form-grid" id="alert-form">
+        <label><span>Server</span><select id="a-server"></select></label>
+        <label><span>Metric</span>
+          <select id="a-metric">
+            <option value="cpu">CPU (%)</option>
+            <option value="ram">RAM (%)</option>
+            <option value="disk">Disk (%)</option>
+            <option value="response_ms">Response time (ms)</option>
+          </select>
+        </label>
+        <label><span>Threshold (alert if above)</span><input id="a-threshold" type="number" step="0.1" required placeholder="80" /></label>
+        <div class="form-actions">
+          <button type="submit" class="primary-btn">Save</button>
+          <button type="button" class="secondary-btn" onclick="closeAlertModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- User Modal -->
+  <div class="modal-overlay" id="user-modal-overlay">
+    <div class="modal form-modal">
+      <div class="modal-header">
+        <h2>Add user</h2>
+        <button class="modal-close" onclick="closeUserModal()">&times;</button>
+      </div>
+      <form class="modal-body form-grid" id="user-form">
+        <label><span>Username</span><input id="u-username" required /></label>
+        <label><span>Password</span><input id="u-password" type="password" required minlength="4" /></label>
+        <label><span>Role</span>
+          <select id="u-role">
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="primary-btn">Save</button>
+          <button type="button" class="secondary-btn" onclick="closeUserModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- History Modal -->
+  <div class="modal-overlay" id="history-modal-overlay">
+    <div class="modal form-modal">
+      <div class="modal-header">
+        <h2 id="history-modal-title">History</h2>
+        <button class="modal-close" onclick="closeHistoryModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="history-body"></div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
