@@ -10,6 +10,7 @@ import asyncio, json, logging, os, secrets, sqlite3, smtplib, time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from typing import Optional
 
@@ -184,22 +185,104 @@ monitor_task = None
 
 # ─── Alerting ───────────────────────────────────────────────────────
 
-def send_alert_email(subject: str, body: str):
+def build_alert_html(server_name: str, metric: str, value: float, threshold: float, timestamp: str) -> str:
+    """Build a modern HTML email template for alerts."""
+    metric_labels = {"cpu": "CPU Usage", "ram": "RAM Usage", "disk": "Disk Usage", "response_ms": "Response Time"}
+    metric_units = {"cpu": "%", "ram": "%", "disk": "%", "response_ms": "ms"}
+    metric_icons = {"cpu": "⚙️", "ram": "💾", "disk": "💿", "response_ms": "⏱️"}
+
+    label = metric_labels.get(metric, metric)
+    unit = metric_units.get(metric, "")
+    icon = metric_icons.get(metric, "⚠️")
+    percent = min(int((value / threshold) * 100), 100) if threshold > 0 else 0
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<div style="max-width:520px;margin:0 auto;padding:32px 16px;">
+
+  <!-- Header -->
+  <div style="text-align:center;margin-bottom:28px;">
+    <div style="display:inline-block;background:#1e293b;border:1px solid #334155;border-radius:16px;padding:20px 28px;">
+      <div style="font-size:36px;margin-bottom:8px;">{icon}</div>
+      <div style="color:#f87171;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:4px;">⚠️ Alert Triggered</div>
+      <div style="color:#f1f5f9;font-size:22px;font-weight:700;">{label}</div>
+      <div style="color:#94a3b8;font-size:14px;margin-top:4px;">on <strong style="color:#e2e8f0;">{server_name}</strong></div>
+    </div>
+  </div>
+
+  <!-- Value Card -->
+  <div style="background:#1e293b;border:1px solid #334155;border-radius:14px;padding:24px;margin-bottom:20px;">
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="color:#94a3b8;font-size:13px;">Current Value</td>
+        <td style="color:#94a3b8;font-size:13px;text-align:right;">Threshold</td>
+      </tr>
+      <tr>
+        <td style="color:#f87171;font-size:32px;font-weight:700;padding-top:4px;">{value}{unit}</td>
+        <td style="color:#f1f5f9;font-size:32px;font-weight:700;padding-top:4px;text-align:right;">{threshold}{unit}</td>
+      </tr>
+    </table>
+
+    <!-- Progress bar -->
+    <div style="background:#0f172a;border-radius:8px;height:10px;margin-top:16px;overflow:hidden;">
+      <div style="background:linear-gradient(90deg,#f97316,#ef4444);height:100%;width:{percent}%;border-radius:8px;transition:width 0.3s;"></div>
+    </div>
+    <div style="color:#64748b;font-size:12px;margin-top:6px;text-align:right;">{percent}% of threshold</div>
+  </div>
+
+  <!-- Details -->
+  <div style="background:#1e293b;border:1px solid #334155;border-radius:14px;padding:20px;margin-bottom:24px;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;">
+      <tr>
+        <td style="color:#94a3b8;padding:6px 0;">Server</td>
+        <td style="color:#f1f5f9;text-align:right;font-weight:600;">{server_name}</td>
+      </tr>
+      <tr>
+        <td style="color:#94a3b8;padding:6px 0;">Metric</td>
+        <td style="color:#f1f5f9;text-align:right;font-weight:600;">{label}</td>
+      </tr>
+      <tr>
+        <td style="color:#94a3b8;padding:6px 0;">Time</td>
+        <td style="color:#f1f5f9;text-align:right;font-weight:600;">{timestamp}</td>
+      </tr>
+      <tr>
+        <td style="color:#94a3b8;padding:6px 0;">Status</td>
+        <td style="text-align:right;"><span style="background:#7f1d1d;color:#fca5a5;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:600;">THRESHOLD EXCEEDED</span></td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Footer -->
+  <div style="text-align:center;color:#475569;font-size:12px;padding:8px 0;">
+    <div style="margin-bottom:4px;">This alert was sent by <strong style="color:#94a3b8;">Network Monitor</strong></div>
+    <div>Server checked every {CHECK_INTERVAL}s · Alert cooldown: 5 min</div>
+  </div>
+
+</div>
+</body></html>"""
+
+
+def send_alert_email(subject: str, body: str, server_name: str = "", metric: str = "", value: float = 0, threshold: float = 0):
     """Send alert email if SMTP is configured."""
     if not all([SMTP_HOST, SMTP_USER, SMTP_PASS, ALERT_EMAIL]):
         return
     try:
-        msg = MIMEText(body, "plain", "utf-8")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        html = build_alert_html(server_name, metric, value, threshold, timestamp)
+
+        msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = SMTP_USER
         msg["To"] = ALERT_EMAIL
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        msg.attach(MIMEText(html, "html", "utf-8"))
+
         if SMTP_PORT == 465:
-            # Implicit TLS (SMTPS)
             with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
                 server.login(SMTP_USER, SMTP_PASS)
                 server.sendmail(SMTP_USER, [ALERT_EMAIL], msg.as_string())
         else:
-            # STARTTLS
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
                 server.starttls()
                 server.login(SMTP_USER, SMTP_PASS)
@@ -230,8 +313,12 @@ def check_alerts(server_id: int, server_name: str, metrics: dict, db=None):
                        (server_id, rule_id, msg, "warning", now))
             db.execute("UPDATE alert_rules SET last_triggered=? WHERE id=?", (now, rule_id))
             send_alert_email(
-                subject=f"[Network Monitor] Alert: {server_name} - {metric}",
-                body=f"Server: {server_name}\nMetric: {metric}\nCurrent value: {value}\nThreshold: {threshold}\n\nTime: {datetime.fromtimestamp(now).isoformat()}"
+                subject=f"[Network Monitor] ⚠️ {server_name} — {metric} exceeded",
+                body=f"Server: {server_name}\nMetric: {metric}\nCurrent value: {value}\nThreshold: {threshold}\n\nTime: {datetime.fromtimestamp(now).isoformat()}",
+                server_name=server_name,
+                metric=metric,
+                value=value,
+                threshold=threshold,
             )
     if own_db:
         db.commit(); db.close()
