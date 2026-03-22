@@ -70,7 +70,11 @@ class AlertRuleIn(BaseModel):
 # ─── Database ───────────────────────────────────────────────────────
 
 def get_db():
-    return sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
 
 def init_db():
     db = get_db()
@@ -205,9 +209,11 @@ def send_alert_email(subject: str, body: str):
         logger.error(f"Failed to send alert email: {e}")
 
 
-def check_alerts(server_id: int, server_name: str, metrics: dict):
+def check_alerts(server_id: int, server_name: str, metrics: dict, db=None):
     """Check alert rules and trigger if thresholds exceeded."""
-    db = get_db()
+    own_db = db is None
+    if own_db:
+        db = get_db()
     now = time.time()
     rules = db.execute("SELECT id, metric, threshold, last_triggered FROM alert_rules WHERE server_id=? AND enabled=1",
                        (server_id,)).fetchall()
@@ -215,22 +221,20 @@ def check_alerts(server_id: int, server_name: str, metrics: dict):
         value = metrics.get(metric)
         if value is None:
             continue
-        # Cooldown: don't alert more than once per 5 minutes
         if now - last_triggered < 300:
             continue
         if value > threshold:
             msg = f"[ALERT] {server_name}: {metric} is {value} (threshold: {threshold})"
             logger.warning(msg)
-            db.execute("INSERT INTO alert_log(server_id,rule_id,message,severity,timestamp) VALUES(?,?,?,?)",
+            db.execute("INSERT INTO alert_log(server_id,rule_id,message,severity,timestamp) VALUES(?,?,?,?,?)",
                        (server_id, rule_id, msg, "warning", now))
             db.execute("UPDATE alert_rules SET last_triggered=? WHERE id=?", (now, rule_id))
-            db.commit()
-            # Send email
             send_alert_email(
                 subject=f"[Network Monitor] Alert: {server_name} - {metric}",
                 body=f"Server: {server_name}\nMetric: {metric}\nCurrent value: {value}\nThreshold: {threshold}\n\nTime: {datetime.fromtimestamp(now).isoformat()}"
             )
-    db.close()
+    if own_db:
+        db.commit(); db.close()
 
 # ─── Check functions ────────────────────────────────────────────────
 
@@ -321,12 +325,17 @@ async def run_monitor_loop():
     global latest_status
     while True:
         try:
+            # Read servers list (short DB access)
             db = get_db(); db.row_factory = sqlite3.Row
-            rows = db.execute("SELECT * FROM servers WHERE enabled=1 ORDER BY name").fetchall()
+            rows = [dict(r) for r in db.execute("SELECT * FROM servers WHERE enabled=1 ORDER BY name").fetchall()]
+            db.close()
+
             now = time.time()
-            result = []
+            results = []
+            check_rows = []
+
+            # Run all checks (no DB open)
             for row in rows:
-                row = dict(row)
                 ct = row["check_type"]
                 if ct == "ssh":
                     s = await check_ssh(row["host"], row.get("port") or 22, row.get("ssh_user") or "root", row.get("ssh_key"), row.get("ssh_password"))
@@ -338,15 +347,21 @@ async def run_monitor_loop():
                     s = await check_tcp(row["host"], row.get("port") or 80)
                 else:
                     s = await check_host(row["host"])
+                check_rows.append((row, s))
+                row.update(s)
+                results.append(row)
+
+            # Write all results (short DB access)
+            db = get_db()
+            for row, s in check_rows:
                 db.execute("INSERT INTO checks(server_id,timestamp,online,response_ms,cpu,ram_used,ram_total,ram_percent,disk_used,disk_total,disk_percent,uptime,load_1,load_5,load_15,detail) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (row["id"], now, int(s["online"]), s.get("response_ms"), s.get("cpu"), s.get("ram_used"), s.get("ram_total"), s.get("ram_percent"), s.get("disk_used"), s.get("disk_total"), s.get("disk_percent"), s.get("uptime"), s.get("load_1"), s.get("load_5"), s.get("load_15"), s.get("detail","")))
-                # Check alerts
-                check_alerts(row["id"], row["name"], {"cpu": s.get("cpu"), "ram": s.get("ram_percent"), "disk": s.get("disk_percent"), "response_ms": s.get("response_ms")})
-                row.update(s); result.append(row)
+                check_alerts(row["id"], row["name"], {"cpu": s.get("cpu"), "ram": s.get("ram_percent"), "disk": s.get("disk_percent"), "response_ms": s.get("response_ms")}, db=db)
             db.execute("DELETE FROM checks WHERE timestamp < ?", (now - 7*86400,))
             db.execute("DELETE FROM alert_log WHERE timestamp < ?", (now - 30*86400,))
             db.commit(); db.close()
-            latest_status = {"servers": result, "timestamp": now, "timestamp_iso": datetime.now().isoformat()}
+
+            latest_status = {"servers": results, "timestamp": now, "timestamp_iso": datetime.now().isoformat()}
             await manager.broadcast({"type": "status_update", "data": latest_status})
             await asyncio.sleep(CHECK_INTERVAL)
         except asyncio.CancelledError:
