@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.2.0] - 2026-03-23
+
+### Added
+- Per-server alerts with checkbox UI — ⚡ Alerts button on each server card
+- Modal with checkbox + threshold for CPU, RAM, Disk, Response Time
+- API: `GET/PUT /api/servers/{sid}/alerts` (bulk save replaces existing rules)
+- Default thresholds: CPU 80%, RAM 85%, Disk 90%, Response 1000ms
+
 ## [1.1.1] - 2026-03-23
 
 ### Added
