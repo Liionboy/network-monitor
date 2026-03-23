@@ -2,23 +2,26 @@
 
 A modern, self-hosted network monitoring dashboard with real-time updates, SSH metrics, and a beautiful dark UI.
 
-![Dashboard Preview](https://img.shields.io/badge/Python-3.10+-blue)
+![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 
 ## Features
 
 - **Real-time monitoring** via WebSocket — instant updates without page refresh
 - **Multiple check types**: Host reachability, HTTP, HTTPS, TCP port, SSH with full system metrics
-- **SSH metrics**: CPU, RAM, Disk, Uptime, Load Average
+- **SSH metrics**: CPU %, RAM %, Disk %, Uptime, Load Average, CPU Model
+- **History graphs** with Y/X-axis labels, stats (Avg/Min/Max), and value tooltips on hover
 - **Beautiful dark UI** — glassmorphism, responsive, modern
 - **Authentication** — secure login with token-based sessions
+- **Email alerting** — receive alerts when thresholds are exceeded
 - **Auto-start** — systemd service, starts on boot
 - **Docker support** — one-command deployment
 - **REST API** — full CRUD for servers, with Swagger docs at `/docs`
 
 ## Quick Start
 
-### Docker (recommended)
+### Option 1: Docker (recommended)
 
 ```bash
 git clone https://github.com/Liionboy/network-monitor.git
@@ -28,22 +31,65 @@ docker compose up -d
 
 Open http://localhost:8765 — login with `admin` / `netmon2026`
 
-### Manual install
+### Option 2: Manual install
 
 ```bash
 git clone https://github.com/Liionboy/network-monitor.git
 cd network-monitor
+
+# Configure environment
+cp .env.example .env
+nano .env  # edit values as needed
+
+# Install & run
 pip install -r requirements.txt
 python3 server.py
 ```
 
-### Environment variables
+Open http://localhost:8765 — login with credentials from your `.env` file.
+
+## Configuration
+
+All configuration is done via environment variables. You can either:
+
+- **Docker**: set them in `docker-compose.yml` (already configured with defaults)
+- **Manual**: copy `.env.example` to `.env` and edit
+
+### Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `NETMON_USER` | `admin` | Login username |
 | `NETMON_PASS` | `netmon2026` | Login password |
-| `NETMON_PORT` | `8765` | Server port |
+| `NETMON_PORT` | `8765` | Server listen port |
+| `CHECK_INTERVAL` | `20` | Seconds between monitoring checks |
+| `NETMON_SMTP_HOST` | — | SMTP server hostname |
+| `NETMON_SMTP_PORT` | `587` | SMTP port (587=STARTTLS, 465=SSL) |
+| `NETMON_SMTP_USER` | — | SMTP username / email |
+| `NETMON_SMTP_PASS` | — | SMTP password or app password |
+| `NETMON_ALERT_EMAIL` | — | Recipient email for alerts |
+
+### Email Alerting Setup
+
+1. Create alert rules in the dashboard (Alerts tab → Add Rule)
+2. Add SMTP settings to your `.env` file:
+
+```env
+NETMON_SMTP_HOST=smtp.gmail.com
+NETMON_SMTP_PORT=587
+NETMON_SMTP_USER=your@email.com
+NETMON_SMTP_PASS=your_app_password
+NETMON_ALERT_EMAIL=recipient@email.com
+```
+
+3. Restart the server
+
+**SMTP Providers:**
+| Provider | Host | Port | Notes |
+|---|---|---|---|
+| Gmail | `smtp.gmail.com` | 587 | Use [App Password](https://myaccount.google.com/apppasswords) |
+| Outlook | `smtp.office365.com` | 587 | |
+| 163.com | `smtp.163.com` | 465 | Use authorization code |
 
 ## Check Types
 
@@ -55,19 +101,21 @@ python3 server.py
 | **TCP** | TCP port open | Host + Port |
 | **SSH** | Full system metrics (CPU, RAM, Disk, Uptime, Load) | SSH access (key or password) |
 
-## SSH Monitoring
+### SSH Monitoring
 
 For SSH checks, you need SSH access to the target server.
 
-### Using SSH key (recommended)
+**Using SSH key (recommended):**
 - Set **SSH User** (e.g., `root`, `ubuntu`)
 - Set **Private Key Path** (e.g., `~/.ssh/id_rsa`)
 - Leave Password empty
 
-### Using password
+**Using password:**
 - Set **SSH User**
 - Leave Private Key empty
 - Set **Password**
+
+SSH metrics collected: CPU %, CPU Model, RAM % (used/total), Disk % (used/total), Uptime, Load Average (1/5/15 min).
 
 ## API Documentation
 
@@ -82,6 +130,10 @@ Full Swagger/OpenAPI docs available at `/docs` when the server is running.
 | `POST` | `/api/servers` | Add a new server |
 | `PUT` | `/api/servers/:id` | Update a server |
 | `DELETE` | `/api/servers/:id` | Delete a server |
+| `GET` | `/api/history/:id?hours=6` | Historical check data (CPU, RAM, Response Time) |
+| `GET` | `/api/alerts` | Recent alert log entries |
+| `GET` | `/api/alert-rules` | List alert rules |
+| `POST` | `/api/alert-rules` | Create alert rule |
 | `GET` | `/api/health` | Health check |
 | `POST` | `/api/login` | Authenticate |
 | `GET` | `/api/check-auth` | Verify token |
@@ -91,8 +143,10 @@ All endpoints (except `/api/login`, `/api/health`, and `/docs`) require an `x-se
 
 ## Changing Password
 
-The default admin password is `admin`. To change it:
+**Via the dashboard:**
+Go to the **Users** tab (admin only) and update the password.
 
+**Via command line:**
 ```bash
 # Generate a bcrypt hash
 python3 -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_NEW_PASSWORD', bcrypt.gensalt()).decode())"
@@ -100,27 +154,6 @@ python3 -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_NEW_PASSWORD', bcrypt.gens
 # Update in database
 sqlite3 monitor.db "UPDATE users SET password_hash='PASTE_HASH_HERE' WHERE username='admin';"
 ```
-
-Or change via the **Users** tab in the dashboard (admin only).
-
-## Email Alerting
-
-To receive email alerts when thresholds are exceeded:
-
-1. Create alert rules in the dashboard (Alerts tab → Add rule)
-2. Set SMTP environment variables:
-
-```bash
-export NETMON_SMTP_HOST=smtp.gmail.com
-export NETMON_SMTP_PORT=587
-export NETMON_SMTP_USER=your@email.com
-export NETMON_SMTP_PASS=your_app_password
-export NETMON_ALERT_EMAIL=recipient@email.com
-```
-
-3. Restart the server
-
-For Gmail, use an [App Password](https://myaccount.google.com/apppasswords).
 
 ## Systemd Service (auto-start on boot)
 
@@ -135,6 +168,9 @@ systemctl --user start network-monitor
 
 # Check status
 systemctl --user status network-monitor
+
+# View logs
+journalctl --user -u network-monitor -f
 ```
 
 ## Tech Stack
@@ -177,14 +213,3 @@ network-monitor/
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
-
-## Screenshots
-
-### Login Page
-Clean, minimal login with logo.
-
-### Dashboard
-Real-time server cards with status, metrics, and service checks.
-
-### SSH Metrics
-Full system metrics via SSH: CPU, RAM, Disk, Uptime, Load Average.
