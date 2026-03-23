@@ -94,6 +94,7 @@ def init_db():
             target TEXT, port INTEGER,
             enabled INTEGER NOT NULL DEFAULT 1,
             ssh_user TEXT, ssh_key TEXT, ssh_password TEXT,
+            cpu_model TEXT,
             created_at REAL NOT NULL, updated_at REAL NOT NULL
         );
         CREATE TABLE IF NOT EXISTS checks (
@@ -126,6 +127,11 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_checks_ts ON checks(server_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alert_log(timestamp);
     """)
+    # Migrate: add cpu_model column if missing
+    try:
+        db.execute("ALTER TABLE servers ADD COLUMN cpu_model TEXT")
+    except Exception:
+        pass
     # Default admin user
     existing = db.execute("SELECT id FROM users WHERE username='admin'").fetchone()
     if not existing:
@@ -357,7 +363,7 @@ async def check_host(host: str):
     return {"online": False, "response_ms": None, "detail": "Host unreachable"}
 
 def get_ssh_metrics(host, port, user, key_path, password=None):
-    r = {"online": False, "response_ms": None, "cpu": None, "ram_used": None, "ram_total": None,
+    r = {"online": False, "response_ms": None, "cpu": None, "cpu_model": None, "ram_used": None, "ram_total": None,
          "ram_percent": None, "disk_used": None, "disk_total": None, "disk_percent": None,
          "uptime": None, "load_1": None, "load_5": None, "load_15": None, "detail": ""}
     try:
@@ -369,14 +375,17 @@ def get_ssh_metrics(host, port, user, key_path, password=None):
         else:
             ssh.connect(host, port=port, username=user, password=password, timeout=10)
         r["response_ms"] = round((time.time() - start) * 1000, 1)
-        for label, cmd in [("cpu","top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1"),
+        for label, cmd in [("cpu_model","cat /proc/cpuinfo 2>/dev/null | grep 'model name' | head -1 | cut -d: -f2 | xargs || uname -m"),
+                           ("cpu","top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1"),
                            ("ram","free -b | grep Mem | awk '{print $3,$2}'"),
                            ("disk","df -B1 / | tail -1 | awk '{print $3,$2}'"),
                            ("uptime","cat /proc/uptime | awk '{print $1}'"),
                            ("load","cat /proc/loadavg | awk '{print $1,$2,$3}'")]:
             _, stdout, _ = ssh.exec_command(cmd, timeout=5)
             raw = stdout.read().decode().strip()
-            if label == "cpu":
+            if label == "cpu_model":
+                r["cpu_model"] = raw if raw else None
+            elif label == "cpu":
                 try: r["cpu"] = float(raw)
                 except: r["cpu"] = 0.0
             elif label == "ram":
@@ -444,6 +453,9 @@ async def run_monitor_loop():
                 db.execute("INSERT INTO checks(server_id,timestamp,online,response_ms,cpu,ram_used,ram_total,ram_percent,disk_used,disk_total,disk_percent,uptime,load_1,load_5,load_15,detail) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (row["id"], now, int(s["online"]), s.get("response_ms"), s.get("cpu"), s.get("ram_used"), s.get("ram_total"), s.get("ram_percent"), s.get("disk_used"), s.get("disk_total"), s.get("disk_percent"), s.get("uptime"), s.get("load_1"), s.get("load_5"), s.get("load_15"), s.get("detail","")))
                 check_alerts(row["id"], row["name"], {"cpu": s.get("cpu"), "ram": s.get("ram_percent"), "disk": s.get("disk_percent"), "response_ms": s.get("response_ms")}, db=db)
+                # Update cpu_model if SSH returned one
+                if s.get("cpu_model"):
+                    db.execute("UPDATE servers SET cpu_model=? WHERE id=?", (s["cpu_model"], row["id"]))
             db.execute("DELETE FROM checks WHERE timestamp < ?", (now - 7*86400,))
             db.execute("DELETE FROM alert_log WHERE timestamp < ?", (now - 30*86400,))
             db.commit(); db.close()
@@ -571,10 +583,16 @@ async def get_history(request: Request, sid: int, hours: int = 6):
     cutoff = time.time() - (hours * 3600)
     db = get_db()
     rows = db.execute(
-        "SELECT timestamp,online,response_ms,cpu,ram_percent,disk_percent,load_1 FROM checks WHERE server_id=? AND timestamp>? ORDER BY timestamp",
+        "SELECT timestamp,online,response_ms,cpu,ram_percent,disk_percent,load_1,ram_total FROM checks WHERE server_id=? AND timestamp>? ORDER BY timestamp",
         (sid, cutoff)).fetchall()
+    # Get cpu_model from servers table
+    server_row = db.execute("SELECT cpu_model FROM servers WHERE id=?", (sid,)).fetchone()
+    cpu_model = server_row[0] if server_row else None
     db.close()
-    return [{"timestamp": r[0], "online": bool(r[1]), "response_ms": r[2], "cpu": r[3], "ram_percent": r[4], "disk_percent": r[5], "load_1": r[6]} for r in rows]
+    return {
+        "cpu_model": cpu_model,
+        "data": [{"timestamp": r[0], "online": bool(r[1]), "response_ms": r[2], "cpu": r[3], "ram_percent": r[4], "disk_percent": r[5], "load_1": r[6], "ram_total": r[7]} for r in rows]
+    }
 
 # ─── Alerts API ─────────────────────────────────────────────────────
 

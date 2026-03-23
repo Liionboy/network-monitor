@@ -190,32 +190,66 @@ async function openHistory(sid, name) {
     document.getElementById('history-body').innerHTML = '<div class="empty">Loading...</div>';
     const res = await apiFetch('/api/history/' + sid + '?hours=6');
     if (!res) return;
-    const data = await res.json();
+    const result = await res.json();
+    const data = result.data || result; // backward compat
+    const cpuModel = result.cpu_model || null;
     const body = document.getElementById('history-body');
 
     if (!data.length) { body.innerHTML = '<div class="empty">No history data yet.</div>'; return; }
 
+    // Collect all timestamps for X-axis
+    const timestamps = data.map(d => d.timestamp);
+    const firstTime = timestamps.length ? new Date(timestamps[0] * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+    const lastTime = timestamps.length ? new Date(timestamps[timestamps.length-1] * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+
+    // Get ram_total from latest data point
+    const lastWithData = [...data].reverse().find(d => d.ram_total);
+    const ramTotalGB = lastWithData ? (lastWithData.ram_total / (1024**3)).toFixed(1) : null;
+
     let html = '';
     // Response time chart
-    const respData = data.filter(d => d.response_ms != null).map(d => d.response_ms);
-    if (respData.length) html += miniChart('Response Time (ms)', respData, Math.max(...respData, 100), '#3b82f6');
+    const respPairs = data.filter(d => d.response_ms != null).map(d => ({v: d.response_ms, ts: d.timestamp}));
+    if (respPairs.length) html += miniChart('Response Time (ms)', respPairs, Math.max(...respPairs.map(p=>p.v), 100), '#3b82f6', firstTime, lastTime, 'ms');
     // CPU chart
-    const cpuData = data.filter(d => d.cpu != null).map(d => d.cpu);
-    if (cpuData.length) html += miniChart('CPU %', cpuData, 100, '#22c55e');
+    const cpuPairs = data.filter(d => d.cpu != null).map(d => ({v: d.cpu, ts: d.timestamp}));
+    const cpuLabel = 'CPU %' + (cpuModel ? ' <span class="chart-hw-info">'+cpuModel+'</span>' : '');
+    if (cpuPairs.length) html += miniChart(cpuLabel, cpuPairs, 100, '#22c55e', firstTime, lastTime, '%');
     // RAM chart
-    const ramData = data.filter(d => d.ram_percent != null).map(d => d.ram_percent);
-    if (ramData.length) html += miniChart('RAM %', ramData, 100, '#f59e0b');
+    const ramPairs = data.filter(d => d.ram_percent != null).map(d => ({v: d.ram_percent, ts: d.timestamp}));
+    const ramLabel = 'RAM %' + (ramTotalGB ? ' <span class="chart-hw-info">'+ramTotalGB+' GB total</span>' : '');
+    if (ramPairs.length) html += miniChart(ramLabel, ramPairs, 100, '#f59e0b', firstTime, lastTime, '%');
 
     body.innerHTML = html || '<div class="empty">No metrics data.</div>';
 }
 
-function miniChart(title, data, maxVal, color) {
-    const bars = data.slice(-60).map(v => {
-        const h = Math.max(2, (v / maxVal) * 60);
-        return '<div class="chart-bar" style="height:'+h+'px;background:'+color+';opacity:0.7" title="'+v.toFixed(1)+'"></div>';
+function miniChart(title, pairs, maxVal, color, firstTime, lastTime, unit) {
+    const bars = pairs.slice(-60).map(p => {
+        const h = Math.max(2, (p.v / maxVal) * 60);
+        const timeStr = new Date(p.ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        return '<div class="chart-bar" style="height:'+h+'px;background:'+color+';opacity:0.7" ' +
+            'data-tip="'+p.v.toFixed(1)+' '+unit+' @ '+timeStr+'"' +
+            'onmouseenter="showChartTip(this)" onmousemove="moveChartTip(event)" onmouseleave="hideChartTip()"></div>';
     }).join('');
-    return '<div class="chart-container"><div class="chart-title">'+title+'</div><div class="mini-chart">'+bars+'</div></div>';
+    const vals = pairs.map(p=>p.v);
+    const avg = (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(1);
+    const min = Math.min(...vals).toFixed(1);
+    const max = Math.max(...vals).toFixed(1);
+    return '<div class="chart-container">' +
+        '<div class="chart-title">'+title+' <span class="chart-stats">Avg: '+avg+' · Min: '+min+' · Max: '+max+' · Samples: '+pairs.length+'</span></div>' +
+        '<div class="chart-y-axis"><span>'+maxVal.toFixed(0)+'</span><span>'+(maxVal/2).toFixed(0)+'</span><span>0</span></div>' +
+        '<div class="mini-chart">'+bars+'</div>' +
+        '<div class="chart-x-axis"><span>'+firstTime+'</span><span>'+lastTime+'</span></div>' +
+        '</div>';
 }
+
+let chartTipEl = null;
+function showChartTip(el) {
+    if (!chartTipEl) { chartTipEl = document.createElement('div'); chartTipEl.className = 'chart-tip'; document.body.appendChild(chartTipEl); }
+    chartTipEl.textContent = el.getAttribute('data-tip');
+    chartTipEl.style.display = 'block';
+}
+function moveChartTip(e) { if (chartTipEl) { chartTipEl.style.left = (e.clientX + 14) + 'px'; chartTipEl.style.top = (e.clientY - 30) + 'px'; } }
+function hideChartTip() { if (chartTipEl) chartTipEl.style.display = 'none'; }
 
 function closeHistoryModal() { document.getElementById('history-modal-overlay').classList.remove('active'); }
 
