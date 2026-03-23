@@ -1,0 +1,6 @@
+[lint]
+ignore = [
+    "E702",  # Multiple statements on one line (semicolon) — common in compact code
+    "E701",  # Multiple statements on one line (colon) — try/except oneliner
+    "E722",  # Bare except — used intentionally in error handling
+]

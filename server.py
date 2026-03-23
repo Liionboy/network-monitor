@@ -6,7 +6,13 @@ Features: real-time WebSocket, SSH metrics, multi-user auth,
 alerting, history graphs, Swagger API docs.
 """
 
-import asyncio, json, logging, os, secrets, sqlite3, smtplib, time
+import asyncio
+import logging
+import os
+import secrets
+import sqlite3
+import smtplib
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -17,8 +23,8 @@ from typing import Optional
 import aiohttp
 import bcrypt
 import paramiko
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, WebSocket, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -666,7 +672,7 @@ async def create_user(request: Request, user: UserIn):
 @app.delete("/api/users/{uid}", tags=["users"])
 async def delete_user(request: Request, uid: int):
     """Delete a user (admin only)."""
-    session = require_admin(request)
+    require_admin(request)
     db = get_db()
     user = db.execute("SELECT username FROM users WHERE id=?", (uid,)).fetchone()
     if not user:
