@@ -143,22 +143,30 @@
   <div class="modal-overlay" id="alert-modal-overlay">
     <div class="modal form-modal">
       <div class="modal-header">
-        <h2>Add alert rule</h2>
+        <h2 id="server-alerts-title">⚡ Server Alerts</h2>
         <button class="modal-close" onclick="closeAlertModal()">&times;</button>
       </div>
       <form class="modal-body form-grid" id="alert-form">
-        <label><span>Server</span><select id="a-server"></select></label>
-        <label><span>Metric</span>
-          <select id="a-metric">
-            <option value="cpu">CPU (%)</option>
-            <option value="ram">RAM (%)</option>
-            <option value="disk">Disk (%)</option>
-            <option value="response_ms">Response time (ms)</option>
-          </select>
-        </label>
-        <label><span>Threshold (alert if above)</span><input id="a-threshold" type="number" step="0.1" required placeholder="80" /></label>
+        <input type="hidden" id="a-server-id" />
+        <p class="alert-desc">Enable alerts for each metric. You'll receive an email when a value exceeds the threshold.</p>
+        <div class="alert-row">
+          <label class="checkbox-row"><input type="checkbox" id="a-cpu-enabled" /> <span>CPU</span></label>
+          <div class="alert-threshold"><span>above</span><input id="a-cpu-threshold" type="number" step="1" min="1" max="100" placeholder="80" /><span>%</span></div>
+        </div>
+        <div class="alert-row">
+          <label class="checkbox-row"><input type="checkbox" id="a-ram-enabled" /> <span>RAM</span></label>
+          <div class="alert-threshold"><span>above</span><input id="a-ram-threshold" type="number" step="1" min="1" max="100" placeholder="85" /><span>%</span></div>
+        </div>
+        <div class="alert-row">
+          <label class="checkbox-row"><input type="checkbox" id="a-disk-enabled" /> <span>Disk</span></label>
+          <div class="alert-threshold"><span>above</span><input id="a-disk-threshold" type="number" step="1" min="1" max="100" placeholder="90" /><span>%</span></div>
+        </div>
+        <div class="alert-row">
+          <label class="checkbox-row"><input type="checkbox" id="a-response-enabled" /> <span>Response Time</span></label>
+          <div class="alert-threshold"><span>above</span><input id="a-response-threshold" type="number" step="1" min="1" placeholder="1000" /><span>ms</span></div>
+        </div>
         <div class="form-actions">
-          <button type="submit" class="primary-btn">Save</button>
+          <button type="submit" class="primary-btn">Save Alerts</button>
           <button type="button" class="secondary-btn" onclick="closeAlertModal()">Cancel</button>
         </div>
       </form>

@@ -104,7 +104,7 @@ function renderDashboard() {
             m+'<div class="detail-row"><span>Check</span><span>'+esc(s.check_type.toUpperCase())+'</span></div>'+
             '<div class="detail-row"><span>Latency</span><span>'+(s.response_ms?s.response_ms+' ms':'—')+'</span></div>'+
             '<div class="detail-row"><span>Detail</span><span>'+esc(s.detail||'-')+'</span></div>'+
-            '<div class="card-footer"><button class="icon-btn" onclick="openHistory('+s.id+',\''+esc(s.name)+'\')">History</button></div></div>';
+            '<div class="card-footer"><button class="icon-btn" onclick="openHistory('+s.id+',\''+esc(s.name)+'\')">History</button> <button class="icon-btn" onclick="openServerAlerts('+s.id+',\''+esc(s.name)+'\')">⚡ Alerts</button></div></div>';
     }).join('');
 }
 
@@ -255,22 +255,56 @@ function closeHistoryModal() { document.getElementById('history-modal-overlay').
 
 // ─── Alerts ────────────────────────────────────────────────────────
 
-function openAlertModal() {
-    const sel = document.getElementById('a-server');
-    sel.innerHTML = serversCache.map(s => '<option value="'+s.id+'">'+esc(s.name)+'</option>').join('');
-    document.getElementById('alert-form').reset();
+const METRIC_DEFAULTS = { cpu: 80, ram: 85, disk: 90, response_ms: 1000 };
+
+async function openServerAlerts(sid, name) {
+    document.getElementById('a-server-id').value = sid;
+    document.getElementById('server-alerts-title').textContent = '⚡ ' + name + ' — Alerts';
+    // Reset
+    ['a-cpu-enabled','a-ram-enabled','a-disk-enabled','a-response-enabled'].forEach(id => document.getElementById(id).checked = false);
+    document.getElementById('a-cpu-threshold').value = METRIC_DEFAULTS.cpu;
+    document.getElementById('a-ram-threshold').value = METRIC_DEFAULTS.ram;
+    document.getElementById('a-disk-threshold').value = METRIC_DEFAULTS.disk;
+    document.getElementById('a-response-threshold').value = METRIC_DEFAULTS.response_ms;
+    // Load existing rules
+    const res = await apiFetch('/api/servers/' + sid + '/alerts');
+    if (res) {
+        const rules = await res.json();
+        rules.forEach(r => {
+            const metric = r.metric;
+            if (metric === 'cpu') { document.getElementById('a-cpu-enabled').checked = true; document.getElementById('a-cpu-threshold').value = r.threshold; }
+            else if (metric === 'ram') { document.getElementById('a-ram-enabled').checked = true; document.getElementById('a-ram-threshold').value = r.threshold; }
+            else if (metric === 'disk') { document.getElementById('a-disk-enabled').checked = true; document.getElementById('a-disk-threshold').value = r.threshold; }
+            else if (metric === 'response_ms') { document.getElementById('a-response-enabled').checked = true; document.getElementById('a-response-threshold').value = r.threshold; }
+        });
+    }
     document.getElementById('alert-modal-overlay').classList.add('active');
 }
 function closeAlertModal() { document.getElementById('alert-modal-overlay').classList.remove('active'); }
+
+document.getElementById('alert-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const sid = Number(document.getElementById('a-server-id').value);
+    const alerts = [];
+    if (document.getElementById('a-cpu-enabled').checked) alerts.push({ metric: 'cpu', threshold: Number(document.getElementById('a-cpu-threshold').value), enabled: true });
+    if (document.getElementById('a-ram-enabled').checked) alerts.push({ metric: 'ram', threshold: Number(document.getElementById('a-ram-threshold').value), enabled: true });
+    if (document.getElementById('a-disk-enabled').checked) alerts.push({ metric: 'disk', threshold: Number(document.getElementById('a-disk-threshold').value), enabled: true });
+    if (document.getElementById('a-response-enabled').checked) alerts.push({ metric: 'response_ms', threshold: Number(document.getElementById('a-response-threshold').value), enabled: true });
+    const res = await apiFetch('/api/servers/' + sid + '/alerts', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ alerts }) });
+    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return alert(err.detail || 'Error.'); }
+    closeAlertModal();
+    // Reload rules list if on alerts tab
+    if (typeof loadAlertRules === 'function') loadAlertRules();
+});
 
 async function loadAlertRules() {
     const res = await apiFetch('/api/alert-rules');
     if (!res) return;
     const rules = await res.json();
     const el = document.getElementById('alert-rules-list');
-    if (!rules.length) { el.innerHTML = '<div class="empty">No alert rules.</div>'; return; }
-    el.innerHTML = '<table class="detail-table"><thead><tr><th>Server</th><th>Metric</th><th>Threshold</th><th>Active</th><th></th></tr></thead><tbody>'+
-        rules.map(r => '<tr><td>'+esc(r.server_name)+'</td><td>'+esc(r.metric)+'</td><td>'+r.threshold+'</td><td>'+(r.enabled?'Yes':'No')+'</td><td><button class="icon-btn danger" onclick="deleteAlertRule('+r.id+')">Del</button></td></tr>').join('')+
+    if (!rules.length) { el.innerHTML = '<div class="empty">No alert rules. Click ⚡ Alerts on a server card to configure.</div>'; return; }
+    el.innerHTML = '<table class="detail-table"><thead><tr><th>Server</th><th>Metric</th><th>Threshold</th><th></th></tr></thead><tbody>'+
+        rules.map(r => '<tr><td>'+esc(r.server_name)+'</td><td>'+esc(r.metric)+'</td><td>'+r.threshold+'</td><td><button class="icon-btn danger" onclick="deleteAlertRule('+r.id+')">Del</button></td></tr>').join('')+
         '</tbody></table>';
 }
 
@@ -284,18 +318,6 @@ async function loadAlertLog() {
         '<div class="list-item"><div><div class="list-title">'+esc(a.server_name)+'</div><div class="list-sub">'+esc(a.message)+'</div></div><span class="list-sub">'+fmtTime(a.timestamp)+'</span></div>'
     ).join('');
 }
-
-document.getElementById('alert-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const payload = {
-        server_id: Number(document.getElementById('a-server').value),
-        metric: document.getElementById('a-metric').value,
-        threshold: Number(document.getElementById('a-threshold').value),
-    };
-    const res = await apiFetch('/api/alert-rules', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-    if (!res || !res.ok) return alert('Error.');
-    closeAlertModal(); loadAlertRules();
-});
 
 async function deleteAlertRule(id) {
     const res = await apiFetch('/api/alert-rules/' + id, { method: 'DELETE' });

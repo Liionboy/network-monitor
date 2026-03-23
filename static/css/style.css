@@ -51,6 +51,11 @@
 .chart-container{margin:12px 0;position:relative}.chart-title{font-size:11px;color:#94a3b8;text-transform:uppercase;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
 .chart-stats{font-size:10px;color:#64748b;text-transform:none;white-space:nowrap}
 .chart-hw-info{font-size:10px;color:#64748b;text-transform:none;font-weight:400;margin-left:4px}
+.alert-desc{font-size:12px;color:#94a3b8;margin:0 0 8px}
+.alert-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;background:#0f1527;border:1px solid #24304d;border-radius:10px}
+.alert-row .checkbox-row{margin:0;min-width:140px}
+.alert-threshold{display:flex;align-items:center;gap:6px;font-size:13px;color:#94a3b8}
+.alert-threshold input{width:80px;background:#11182b;border:1px solid #2a3654;border-radius:8px;padding:6px 8px;color:#eef2ff;font-size:14px;text-align:center}
 .mini-chart{display:flex;align-items:flex-end;gap:2px;height:70px;padding:6px;background:#0f1527;border-radius:8px}
 .chart-bar{flex:1;min-width:3px;border-radius:2px 2px 0 0;cursor:crosshair;transition:opacity 0.15s}
 .chart-bar:hover{opacity:1!important;filter:brightness(1.3)}

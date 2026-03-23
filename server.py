@@ -641,6 +641,45 @@ async def delete_alert_rule(request: Request, rid: int):
     if cur.rowcount == 0: raise HTTPException(404, "Not found")
     return {"ok": True}
 
+class ServerAlertIn(BaseModel):
+    metric: str
+    threshold: float
+    enabled: bool = True
+
+class ServerAlertsIn(BaseModel):
+    alerts: list[ServerAlertIn]
+
+@app.get("/api/servers/{sid}/alerts", tags=["alerts"])
+async def get_server_alerts(request: Request, sid: int):
+    """Get all alert rules for a specific server."""
+    is_authed(request)
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, metric, threshold, enabled, last_triggered FROM alert_rules WHERE server_id=?",
+        (sid,)).fetchall()
+    db.close()
+    return [{"id": r[0], "metric": r[1], "threshold": r[2], "enabled": bool(r[3]), "last_triggered": r[4]} for r in rows]
+
+@app.put("/api/servers/{sid}/alerts", tags=["alerts"])
+async def save_server_alerts(request: Request, sid: int, body: ServerAlertsIn):
+    """Save all alert rules for a server (replaces existing)."""
+    is_authed(request)
+    db = get_db()
+    # Verify server exists
+    server = db.execute("SELECT name FROM servers WHERE id=?", (sid,)).fetchone()
+    if not server:
+        db.close(); raise HTTPException(404, "Server not found")
+    # Delete existing rules for this server
+    db.execute("DELETE FROM alert_rules WHERE server_id=?", (sid,))
+    # Insert new rules
+    for alert in body.alerts:
+        if alert.enabled and alert.threshold > 0:
+            db.execute(
+                "INSERT INTO alert_rules(server_id, metric, threshold, enabled) VALUES(?,?,?,?)",
+                (sid, alert.metric, alert.threshold, 1))
+    db.commit(); db.close()
+    return {"ok": True}
+
 # ─── Users API (admin only) ────────────────────────────────────────
 
 @app.get("/api/users", tags=["users"])
