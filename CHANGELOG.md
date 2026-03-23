@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.1.1] - 2026-03-23
+
+### Added
+- Change password from UI — 🔑 Password button in Users tab
+- New API endpoint: `PUT /api/users/{uid}/password`
+- Admin can change any user's password; users can change their own
+- Password validation: minimum 4 characters
+
 ## [1.1.0] - 2026-03-23
 
 ### Added
