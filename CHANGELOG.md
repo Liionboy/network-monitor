@@ -12,6 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Admin can change any user's password; users can change their own
 - Password validation: minimum 4 characters
 
+### Fixed
+- Wider server cards to prevent metric value wrapping (e.g. "31.1 GB")
+- Server grid min-width increased from 280px to 340px
+- Metric values now have `white-space:nowrap`
+
 ## [1.1.0] - 2026-03-23
 
 ### Added
