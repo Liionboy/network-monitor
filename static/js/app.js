@@ -308,13 +308,25 @@ async function deleteAlertRule(id) {
 function openUserModal() { document.getElementById('user-form').reset(); document.getElementById('user-modal-overlay').classList.add('active'); }
 function closeUserModal() { document.getElementById('user-modal-overlay').classList.remove('active'); }
 
+function openPasswordModal(uid, username) {
+    document.getElementById('pw-user-id').value = uid;
+    document.getElementById('pw-username').value = username;
+    document.getElementById('pw-user-display').value = username;
+    document.getElementById('pw-new-password').value = '';
+    document.getElementById('password-modal-overlay').classList.add('active');
+}
+function closePasswordModal() { document.getElementById('password-modal-overlay').classList.remove('active'); }
+
 async function loadUsers() {
     const res = await apiFetch('/api/users');
     if (!res) { document.getElementById('users-list').innerHTML = '<div class="empty">Admin access required.</div>'; return; }
     const users = await res.json();
     const el = document.getElementById('users-list');
     el.innerHTML = '<table class="detail-table"><thead><tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr></thead><tbody>'+
-        users.map(u => '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.role)+'</td><td>'+fmtTime(u.created_at)+'</td><td>'+(u.username==='admin'?'':'<button class="icon-btn danger" onclick="deleteUser('+u.id+')">Del</button>')+'</td></tr>').join('')+
+        users.map(u => '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.role)+'</td><td>'+fmtTime(u.created_at)+'</td><td>'+
+        '<button class="icon-btn" onclick="openPasswordModal('+u.id+',\''+esc(u.username)+'\')">🔑 Password</button> '+
+        (u.username==='admin'?'':'<button class="icon-btn danger" onclick="deleteUser('+u.id+')">Del</button>')+
+        '</td></tr>').join('')+
         '</tbody></table>';
 }
 
@@ -337,6 +349,16 @@ async function deleteUser(id) {
     loadUsers();
 }
 
+document.getElementById('password-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const uid = document.getElementById('pw-user-id').value;
+    const password = document.getElementById('pw-new-password').value;
+    const res = await apiFetch('/api/users/' + uid + '/password', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ password }) });
+    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return alert(err.detail || 'Error.'); }
+    closePasswordModal();
+    alert('Password updated!');
+});
+
 // ─── Init ──────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -344,7 +366,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadServers();
     connectWs();
     // Close modals on overlay click
-    ['server-modal-overlay','alert-modal-overlay','user-modal-overlay','history-modal-overlay'].forEach(id => {
+    ['server-modal-overlay','alert-modal-overlay','user-modal-overlay','history-modal-overlay','password-modal-overlay'].forEach(id => {
         document.getElementById(id).addEventListener('click', (e) => {
             if (e.target.id === id) e.target.classList.remove('active');
         });

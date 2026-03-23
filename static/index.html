@@ -82,6 +82,26 @@
     </main>
   </div>
 
+  <!-- Change Password Modal -->
+  <div class="modal-overlay" id="password-modal-overlay">
+    <div class="modal form-modal">
+      <div class="modal-header">
+        <h2>Change Password</h2>
+        <button class="modal-close" onclick="closePasswordModal()">&times;</button>
+      </div>
+      <form class="modal-body form-grid" id="password-form">
+        <input type="hidden" id="pw-user-id" />
+        <input type="hidden" id="pw-username" />
+        <label><span>User</span><input id="pw-user-display" disabled /></label>
+        <label><span>New Password</span><input id="pw-new-password" type="password" required minlength="4" /></label>
+        <div class="form-actions">
+          <button type="submit" class="primary-btn">Update</button>
+          <button type="button" class="secondary-btn" onclick="closePasswordModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Server Modal -->
   <div class="modal-overlay" id="server-modal-overlay">
     <div class="modal form-modal">

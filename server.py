@@ -676,6 +676,26 @@ async def delete_user(request: Request, uid: int):
     db.execute("DELETE FROM users WHERE id=?", (uid,)); db.commit(); db.close()
     return {"ok": True}
 
+class PasswordIn(BaseModel):
+    password: str
+
+@app.put("/api/users/{uid}/password", tags=["users"])
+async def change_password(request: Request, uid: int, body: PasswordIn):
+    """Change a user's password. Admin can change anyone; users can change their own."""
+    session = is_authed(request)
+    if session["role"] != "admin" and session.get("user_id") != uid:
+        raise HTTPException(403, "You can only change your own password")
+    if len(body.password) < 4:
+        raise HTTPException(400, "Password must be at least 4 characters")
+    db = get_db()
+    user = db.execute("SELECT id FROM users WHERE id=?", (uid,)).fetchone()
+    if not user:
+        db.close(); raise HTTPException(404, "User not found")
+    pw_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+    db.execute("UPDATE users SET password_hash=? WHERE id=?", (pw_hash, uid))
+    db.commit(); db.close()
+    return {"ok": True}
+
 # ─── WebSocket ──────────────────────────────────────────────────────
 
 @app.websocket("/ws")
