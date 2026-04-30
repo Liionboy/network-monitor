@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.3.0] - 2026-04-30
+
+### Added
+- Top processes in alert emails — 🔥 See which process is eating CPU/RAM
+- SSH metrics now collect `ps aux --sort=-%cpu` for top 5 processes
+- Alert email template shows PID, %CPU, %MEM, and Command
+- Helps identify root cause immediately without logging into the server
+
 ## [1.2.0] - 2026-03-23
 
 ### Added
