@@ -197,7 +197,7 @@ monitor_task = None
 
 # ─── Alerting ───────────────────────────────────────────────────────
 
-def build_alert_html(server_name: str, metric: str, value: float, threshold: float, timestamp: str) -> str:
+def build_alert_html(server_name: str, metric: str, value: float, threshold: float, timestamp: str, top_processes: str = "") -> str:
     """Build a modern HTML email template for alerts."""
     metric_labels = {"cpu": "CPU Usage", "ram": "RAM Usage", "disk": "Disk Usage", "response_ms": "Response Time"}
     metric_units = {"cpu": "%", "ram": "%", "disk": "%", "response_ms": "ms"}
@@ -265,6 +265,14 @@ def build_alert_html(server_name: str, metric: str, value: float, threshold: flo
     </table>
   </div>
 
+  <!-- Top Processes -->
+  <div style="background:#1e293b;border:1px solid #334155;border-radius:14px;padding:20px;margin-bottom:24px;">
+    <div style="color:#94a3b8;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">
+      🔥 Top Processes by CPU
+    </div>
+    <pre style="color:#e2e8f0;font-size:13px;margin:0;white-space:pre-wrap;word-break:break-all;font-family:monospace;">{top_processes}</pre>
+  </div>
+
   <!-- Footer -->
   <div style="text-align:center;color:#475569;font-size:12px;padding:8px 0;">
     <div style="margin-bottom:4px;">This alert was sent by <strong style="color:#94a3b8;">Network Monitor</strong></div>
@@ -275,13 +283,13 @@ def build_alert_html(server_name: str, metric: str, value: float, threshold: flo
 </body></html>"""
 
 
-def send_alert_email(subject: str, body: str, server_name: str = "", metric: str = "", value: float = 0, threshold: float = 0):
+def send_alert_email(subject: str, body: str, server_name: str = "", metric: str = "", value: float = 0, threshold: float = 0, top_processes: str = ""):
     """Send alert email if SMTP is configured."""
     if not all([SMTP_HOST, SMTP_USER, SMTP_PASS, ALERT_EMAIL]):
         return
     try:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        html = build_alert_html(server_name, metric, value, threshold, timestamp)
+        html = build_alert_html(server_name, metric, value, threshold, timestamp, top_processes)
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -304,7 +312,7 @@ def send_alert_email(subject: str, body: str, server_name: str = "", metric: str
         logger.error(f"Failed to send alert email: {e}")
 
 
-def check_alerts(server_id: int, server_name: str, metrics: dict, db=None):
+def check_alerts(server_id: int, server_name: str, metrics: dict, db=None, top_processes: str = ""):
     """Check alert rules and trigger if thresholds exceeded."""
     own_db = db is None
     if own_db:
@@ -331,6 +339,7 @@ def check_alerts(server_id: int, server_name: str, metrics: dict, db=None):
                 metric=metric,
                 value=value,
                 threshold=threshold,
+                top_processes=top_processes,
             )
     if own_db:
         db.commit(); db.close()
@@ -386,7 +395,8 @@ def get_ssh_metrics(host, port, user, key_path, password=None):
                            ("ram","free -b | grep Mem | awk '{print $3,$2}'"),
                            ("disk","df -B1 / | tail -1 | awk '{print $3,$2}'"),
                            ("uptime","cat /proc/uptime | awk '{print $1}'"),
-                           ("load","cat /proc/loadavg | awk '{print $1,$2,$3}'")]:
+                           ("load","cat /proc/loadavg | awk '{print $1,$2,$3}'"),
+                           ("processes","ps aux --sort=-%cpu | head -6 | awk '{printf \"%-10s %5s %5s %s\\n\", $2, $3, $4, $11}'")]:
             _, stdout, _ = ssh.exec_command(cmd, timeout=5)
             raw = stdout.read().decode().strip()
             if label == "cpu_model":
@@ -411,6 +421,8 @@ def get_ssh_metrics(host, port, user, key_path, password=None):
                 p = raw.split()
                 if len(p) == 3:
                     r["load_1"] = float(p[0]); r["load_5"] = float(p[1]); r["load_15"] = float(p[2])
+            elif label == "processes":
+                r["top_processes"] = raw
         ssh.close()
         r["online"] = True; r["detail"] = "SSH OK"
     except Exception as e:
@@ -458,7 +470,7 @@ async def run_monitor_loop():
             for row, s in check_rows:
                 db.execute("INSERT INTO checks(server_id,timestamp,online,response_ms,cpu,ram_used,ram_total,ram_percent,disk_used,disk_total,disk_percent,uptime,load_1,load_5,load_15,detail) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (row["id"], now, int(s["online"]), s.get("response_ms"), s.get("cpu"), s.get("ram_used"), s.get("ram_total"), s.get("ram_percent"), s.get("disk_used"), s.get("disk_total"), s.get("disk_percent"), s.get("uptime"), s.get("load_1"), s.get("load_5"), s.get("load_15"), s.get("detail","")))
-                check_alerts(row["id"], row["name"], {"cpu": s.get("cpu"), "ram": s.get("ram_percent"), "disk": s.get("disk_percent"), "response_ms": s.get("response_ms")}, db=db)
+                check_alerts(row["id"], row["name"], {"cpu": s.get("cpu"), "ram": s.get("ram_percent"), "disk": s.get("disk_percent"), "response_ms": s.get("response_ms")}, db=db, top_processes=s.get("top_processes", ""))
                 # Update cpu_model if SSH returned one
                 if s.get("cpu_model"):
                     db.execute("UPDATE servers SET cpu_model=? WHERE id=?", (s["cpu_model"], row["id"]))
