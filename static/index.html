@@ -33,6 +33,7 @@
         <nav class="nav-tabs">
           <button class="nav-tab active" onclick="switchTab('dashboard')">Dashboard</button>
           <button class="nav-tab" onclick="switchTab('alerts')">Alerts</button>
+          <button class="nav-tab" onclick="switchTab('maintenance')">Maintenance</button>
           <button class="nav-tab" onclick="switchTab('users')">Users</button>
         </nav>
         <button class="primary-btn" onclick="openServerModal()">+ Add server</button>
@@ -67,6 +68,17 @@
       <section class="panel" style="grid-column:1/-1">
         <div class="panel-header"><h2>Alert History</h2></div>
         <div id="alert-log-list"></div>
+      </section>
+    </main>
+
+    <!-- Maintenance Tab -->
+    <main class="layout hidden" id="tab-maintenance">
+      <section class="panel" style="grid-column:1/-1;max-width:700px">
+        <div class="panel-header"><h2>🔇 Maintenance Windows</h2>
+          <button class="primary-btn" onclick="openMaintenanceModal()">+ Add Window</button>
+        </div>
+        <p class="alert-desc" style="margin-bottom:12px">During maintenance windows, alerts are suppressed for the selected server.</p>
+        <div id="maintenance-list"></div>
       </section>
     </main>
 
@@ -119,6 +131,9 @@
             <option value="https">HTTPS</option>
             <option value="tcp">TCP port</option>
             <option value="ssh">SSH (with metrics)</option>
+            <option value="ping">Ping / ICMP</option>
+            <option value="ssl">SSL Certificate</option>
+            <option value="docker">Docker Containers</option>
           </select>
         </label>
         <label id="target-wrap" class="hidden"><span>Custom URL</span><input id="f-target" placeholder="https://example.com/health" /></label>
@@ -128,6 +143,11 @@
           <label><span>SSH User</span><input id="f-ssh-user" placeholder="root" /></label>
           <label><span>Private Key Path</span><input id="f-ssh-key" placeholder="~/.ssh/id_rsa" /></label>
           <label><span>Password (if no key)</span><input id="f-ssh-password" type="password" placeholder="Optional" /></label>
+        </div>
+        <div id="health-fields" class="hidden">
+          <div class="section-title">Health Check</div>
+          <label><span>Health Path</span><input id="f-health-path" placeholder="/api/health" /></label>
+          <label><span>Expected Status Code</span><input id="f-expected-status" type="number" min="100" max="599" placeholder="200" /></label>
         </div>
         <label class="checkbox-row"><input id="f-enabled" type="checkbox" checked /> <span>Enabled</span></label>
         <div class="form-actions">
@@ -204,6 +224,28 @@
         <button class="modal-close" onclick="closeHistoryModal()">&times;</button>
       </div>
       <div class="modal-body" id="history-body"></div>
+    </div>
+  </div>
+
+  <!-- Maintenance Window Modal -->
+  <div class="modal-overlay" id="maintenance-modal-overlay">
+    <div class="modal form-modal">
+      <div class="modal-header">
+        <h2>Add Maintenance Window</h2>
+        <button class="modal-close" onclick="closeMaintenanceModal()">&times;</button>
+      </div>
+      <form class="modal-body form-grid" id="maintenance-form">
+        <label><span>Server *</span><select id="mw-server-id"></select></label>
+        <label><span>Start Hour</span><input id="mw-start-hour" type="number" min="0" max="23" value="23" required /></label>
+        <label><span>Start Minute</span><input id="mw-start-minute" type="number" min="0" max="59" value="0" required /></label>
+        <label><span>End Hour</span><input id="mw-end-hour" type="number" min="0" max="23" value="6" required /></label>
+        <label><span>End Minute</span><input id="mw-end-minute" type="number" min="0" max="59" value="0" required /></label>
+        <label><span>Days of Week</span><input id="mw-days" value="0,1,2,3,4,5,6" placeholder="0=Mon,6=Sun" /><small>Comma-separated: 0=Mon ... 6=Sun</small></label>
+        <div class="form-actions">
+          <button type="submit" class="primary-btn">Save</button>
+          <button type="button" class="secondary-btn" onclick="closeMaintenanceModal()">Cancel</button>
+        </div>
+      </form>
     </div>
   </div>
 

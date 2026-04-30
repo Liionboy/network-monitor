@@ -21,6 +21,7 @@ function switchTab(tab) {
     event.target.classList.add('active');
     if (tab === 'alerts') { loadAlertRules(); loadAlertLog(); }
     if (tab === 'users') loadUsers();
+    if (tab === 'maintenance') loadMaintenanceWindows();
 }
 
 // ─── Data loading ──────────────────────────────────────────────────
@@ -72,6 +73,12 @@ function fmtTime(ts) {
     return new Date(ts * 1000).toLocaleString('ro-RO', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
 }
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtBandwidth(bps) {
+    if (!bps || bps < 0) return '-';
+    if (bps >= 1e6) return (bps/1e6).toFixed(1) + ' MB/s';
+    if (bps >= 1e3) return (bps/1e3).toFixed(1) + ' KB/s';
+    return bps.toFixed(0) + ' B/s';
+}
 
 // ─── Dashboard ─────────────────────────────────────────────────────
 
@@ -97,6 +104,25 @@ function renderDashboard() {
                 '<div class="metric"><span class="metric-label">Disk</span><span class="metric-value">'+(s.disk_percent!=null?s.disk_percent.toFixed(1)+'%':'-')+'</span></div></div>'+
                 '<div class="info-row"><span>Uptime: <b>'+fmtUptime(s.uptime)+'</b></span><span>Load: <b>'+(s.load_1||'-')+' / '+(s.load_5||'-')+' / '+(s.load_15||'-')+'</b></span></div>'+
                 '<div class="info-row"><span>RAM: <b>'+fmtBytes(s.ram_used)+' / '+fmtBytes(s.ram_total)+'</b></span><span>Disk: <b>'+fmtBytes(s.disk_used)+' / '+fmtBytes(s.disk_total)+'</b></span></div>';
+            if (s.bandwidth_rx || s.bandwidth_tx) {
+                m += '<div class="info-row"><span>↓ <b>'+fmtBandwidth(s.bandwidth_rx)+'</b></span><span>↑ <b>'+fmtBandwidth(s.bandwidth_tx)+'</b></span></div>';
+            }
+            if (s.top_processes) {
+                m += '<div class="info-row" style="max-height:60px;overflow-y:auto;font-size:11px;font-family:monospace;white-space:pre;color:#94a3b8;background:#0f172a;padding:4px 8px;border-radius:6px;margin-top:4px;">'+esc(s.top_processes)+'</div>';
+            }
+        } else if (s.check_type === 'ssl' && s.online) {
+            const days = s.ssl_days;
+            const color = days < 7 ? '#ef4444' : days < 30 ? '#f59e0b' : '#22c55e';
+            m = '<div class="metrics-row">'+
+                '<div class="metric"><span class="metric-label">SSL Expires</span><span class="metric-value" style="color:'+color+'">'+days+' days</span></div></div>';
+        } else if (s.check_type === 'ping' && s.online) {
+            m = '<div class="metrics-row">'+
+                '<div class="metric"><span class="metric-label">Latency</span><span class="metric-value">'+(s.ping_ms?s.ping_ms.toFixed(1)+' ms':'-')+'</span></div></div>';
+        } else if (s.check_type === 'docker' && s.online) {
+            m = '<div class="info-row" style="max-height:100px;overflow-y:auto;font-size:11px;font-family:monospace;white-space:pre;color:#94a3b8;background:#0f172a;padding:8px;border-radius:6px;margin-top:4px;">'+esc(s.docker_status || 'No containers')+'</div>';
+        }
+        if (s.health_path) {
+            m += '<div class="info-row"><span>Health: <b>'+esc(s.health_path)+'</b>'+(s.expected_status?' → expect '+s.expected_status:'')+'</span></div>';
         }
         return '<div class="server-card '+(s.online?'online':'offline')+'">'+
             '<div class="card-header"><div><div class="server-name">'+esc(s.name)+'</div><div class="server-host">'+esc(s.host)+'</div></div>'+
@@ -104,7 +130,7 @@ function renderDashboard() {
             m+'<div class="detail-row"><span>Check</span><span>'+esc(s.check_type.toUpperCase())+'</span></div>'+
             '<div class="detail-row"><span>Latency</span><span>'+(s.response_ms?s.response_ms+' ms':'—')+'</span></div>'+
             '<div class="detail-row"><span>Detail</span><span>'+esc(s.detail||'-')+'</span></div>'+
-            '<div class="card-footer"><button class="icon-btn" onclick="openHistory('+s.id+',\''+esc(s.name)+'\')">History</button> <button class="icon-btn" onclick="openServerAlerts('+s.id+',\''+esc(s.name)+'\')">⚡ Alerts</button></div></div>';
+            '<div class="card-footer"><button class="icon-btn" onclick="openHistory('+s.id+',\''+esc(s.name)+'\')">📊 History</button> <button class="icon-btn" onclick="openServerAlerts('+s.id+',\''+esc(s.name)+'\')">⚡ Alerts</button></div></div>';
     }).join('');
 }
 
@@ -141,6 +167,8 @@ function editServer(s) {
     document.getElementById('f-ssh-user').value = s.ssh_user || '';
     document.getElementById('f-ssh-key').value = s.ssh_key || '';
     document.getElementById('f-ssh-password').value = '';
+    document.getElementById('f-health-path').value = s.health_path || '';
+    document.getElementById('f-expected-status').value = s.expected_status || '';
     document.getElementById('f-enabled').checked = !!s.enabled;
     toggleCheckFields();
     document.getElementById('server-modal-overlay').classList.add('active');
@@ -148,9 +176,10 @@ function editServer(s) {
 
 function toggleCheckFields() {
     const t = document.getElementById('f-check-type').value;
-    document.getElementById('port-wrap').classList.toggle('hidden', t !== 'tcp' && t !== 'ssh');
+    document.getElementById('port-wrap').classList.toggle('hidden', t !== 'tcp' && t !== 'ssh' && t !== 'ssl');
     document.getElementById('target-wrap').classList.toggle('hidden', t !== 'http' && t !== 'https');
     document.getElementById('ssh-fields').classList.toggle('hidden', t !== 'ssh');
+    document.getElementById('health-fields').classList.toggle('hidden', t !== 'http' && t !== 'https');
 }
 
 // ─── Server CRUD ───────────────────────────────────────────────────
@@ -167,6 +196,8 @@ document.getElementById('server-form').addEventListener('submit', async (e) => {
         ssh_user: document.getElementById('f-ssh-user').value.trim() || null,
         ssh_key: document.getElementById('f-ssh-key').value.trim() || null,
         ssh_password: document.getElementById('f-ssh-password').value || null,
+        health_path: document.getElementById('f-health-path').value.trim() || null,
+        expected_status: document.getElementById('f-expected-status').value ? Number(document.getElementById('f-expected-status').value) : null,
         enabled: document.getElementById('f-enabled').checked,
     };
     const url = id ? '/api/servers/' + id : '/api/servers';
@@ -191,33 +222,39 @@ async function openHistory(sid, name) {
     const res = await apiFetch('/api/history/' + sid + '?hours=6');
     if (!res) return;
     const result = await res.json();
-    const data = result.data || result; // backward compat
+    const data = result.data || result;
     const cpuModel = result.cpu_model || null;
     const body = document.getElementById('history-body');
 
     if (!data.length) { body.innerHTML = '<div class="empty">No history data yet.</div>'; return; }
 
-    // Collect all timestamps for X-axis
     const timestamps = data.map(d => d.timestamp);
     const firstTime = timestamps.length ? new Date(timestamps[0] * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
     const lastTime = timestamps.length ? new Date(timestamps[timestamps.length-1] * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
 
-    // Get ram_total from latest data point
     const lastWithData = [...data].reverse().find(d => d.ram_total);
     const ramTotalGB = lastWithData ? (lastWithData.ram_total / (1024**3)).toFixed(1) : null;
 
     let html = '';
-    // Response time chart
     const respPairs = data.filter(d => d.response_ms != null).map(d => ({v: d.response_ms, ts: d.timestamp}));
     if (respPairs.length) html += miniChart('Response Time (ms)', respPairs, Math.max(...respPairs.map(p=>p.v), 100), '#3b82f6', firstTime, lastTime, 'ms');
-    // CPU chart
     const cpuPairs = data.filter(d => d.cpu != null).map(d => ({v: d.cpu, ts: d.timestamp}));
     const cpuLabel = 'CPU %' + (cpuModel ? ' <span class="chart-hw-info">'+cpuModel+'</span>' : '');
     if (cpuPairs.length) html += miniChart(cpuLabel, cpuPairs, 100, '#22c55e', firstTime, lastTime, '%');
-    // RAM chart
     const ramPairs = data.filter(d => d.ram_percent != null).map(d => ({v: d.ram_percent, ts: d.timestamp}));
     const ramLabel = 'RAM %' + (ramTotalGB ? ' <span class="chart-hw-info">'+ramTotalGB+' GB total</span>' : '');
     if (ramPairs.length) html += miniChart(ramLabel, ramPairs, 100, '#f59e0b', firstTime, lastTime, '%');
+    // Ping chart
+    const pingPairs = data.filter(d => d.ping_ms != null).map(d => ({v: d.ping_ms, ts: d.timestamp}));
+    if (pingPairs.length) html += miniChart('Ping (ms)', pingPairs, Math.max(...pingPairs.map(p=>p.v), 10), '#a855f7', firstTime, lastTime, 'ms');
+    // SSL days chart
+    const sslPairs = data.filter(d => d.ssl_days != null).map(d => ({v: d.ssl_days, ts: d.timestamp}));
+    if (sslPairs.length) html += miniChart('SSL Expiry (days)', sslPairs, 365, '#06b6d4', firstTime, lastTime, ' days');
+    // Bandwidth charts
+    const bwRxPairs = data.filter(d => d.bandwidth_rx != null).map(d => ({v: d.bandwidth_rx, ts: d.timestamp}));
+    if (bwRxPairs.length) html += miniChart('↓ RX Bandwidth (B/s)', bwRxPairs, Math.max(...bwRxPairs.map(p=>p.v), 1000), '#3b82f6', firstTime, lastTime, 'B/s');
+    const bwTxPairs = data.filter(d => d.bandwidth_tx != null).map(d => ({v: d.bandwidth_tx, ts: d.timestamp}));
+    if (bwTxPairs.length) html += miniChart('↑ TX Bandwidth (B/s)', bwTxPairs, Math.max(...bwTxPairs.map(p=>p.v), 1000), '#f97316', firstTime, lastTime, 'B/s');
 
     body.innerHTML = html || '<div class="empty">No metrics data.</div>';
 }
@@ -260,13 +297,11 @@ const METRIC_DEFAULTS = { cpu: 80, ram: 85, disk: 90, response_ms: 1000 };
 async function openServerAlerts(sid, name) {
     document.getElementById('a-server-id').value = sid;
     document.getElementById('server-alerts-title').textContent = '⚡ ' + name + ' — Alerts';
-    // Reset
     ['a-cpu-enabled','a-ram-enabled','a-disk-enabled','a-response-enabled'].forEach(id => document.getElementById(id).checked = false);
     document.getElementById('a-cpu-threshold').value = METRIC_DEFAULTS.cpu;
     document.getElementById('a-ram-threshold').value = METRIC_DEFAULTS.ram;
     document.getElementById('a-disk-threshold').value = METRIC_DEFAULTS.disk;
     document.getElementById('a-response-threshold').value = METRIC_DEFAULTS.response_ms;
-    // Load existing rules
     const res = await apiFetch('/api/servers/' + sid + '/alerts');
     if (res) {
         const rules = await res.json();
@@ -293,7 +328,6 @@ document.getElementById('alert-form').addEventListener('submit', async (e) => {
     const res = await apiFetch('/api/servers/' + sid + '/alerts', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ alerts }) });
     if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return alert(err.detail || 'Error.'); }
     closeAlertModal();
-    // Reload rules list if on alerts tab
     if (typeof loadAlertRules === 'function') loadAlertRules();
 });
 
@@ -323,6 +357,55 @@ async function deleteAlertRule(id) {
     const res = await apiFetch('/api/alert-rules/' + id, { method: 'DELETE' });
     if (!res || !res.ok) return alert('Error.');
     loadAlertRules();
+}
+
+// ─── Maintenance Windows ─────────────────────────────────────────────
+
+async function loadMaintenanceWindows() {
+    const res = await apiFetch('/api/maintenance-windows');
+    if (!res) return;
+    const windows = await res.json();
+    const el = document.getElementById('maintenance-list');
+    if (!windows.length) { el.innerHTML = '<div class="empty">No maintenance windows configured.</div>'; return; }
+    const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    el.innerHTML = '<table class="detail-table"><thead><tr><th>Server</th><th>From</th><th>To</th><th>Days</th><th></th></tr></thead><tbody>'+
+        windows.map(w => {
+            const days = w.days_of_week.split(',').map(d => dayNames[parseInt(d)]).join(', ');
+            return '<tr><td>'+esc(w.server_name)+'</td><td>'+String(w.start_hour).padStart(2,'0')+':'+String(w.start_minute).padStart(2,'0')+'</td><td>'+String(w.end_hour).padStart(2,'0')+':'+String(w.end_minute).padStart(2,'0')+'</td><td>'+days+'</td><td><button class="icon-btn danger" onclick="deleteMaintenanceWindow('+w.id+')">Del</button></td></tr>';
+        }).join('')+
+        '</tbody></table>';
+}
+
+function openMaintenanceModal() {
+    document.getElementById('maintenance-form').reset();
+    // Populate server dropdown
+    const sel = document.getElementById('mw-server-id');
+    sel.innerHTML = serversCache.map(s => '<option value="'+s.id+'">'+esc(s.name)+'</option>').join('');
+    document.getElementById('maintenance-modal-overlay').classList.add('active');
+}
+function closeMaintenanceModal() { document.getElementById('maintenance-modal-overlay').classList.remove('active'); }
+
+document.getElementById('maintenance-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = {
+        server_id: Number(document.getElementById('mw-server-id').value),
+        start_hour: Number(document.getElementById('mw-start-hour').value),
+        start_minute: Number(document.getElementById('mw-start-minute').value),
+        end_hour: Number(document.getElementById('mw-end-hour').value),
+        end_minute: Number(document.getElementById('mw-end-minute').value),
+        days_of_week: document.getElementById('mw-days').value,
+        enabled: true,
+    };
+    const res = await apiFetch('/api/maintenance-windows', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return alert(err.detail || 'Error.'); }
+    closeMaintenanceModal(); loadMaintenanceWindows();
+});
+
+async function deleteMaintenanceWindow(id) {
+    if (!confirm('Delete this maintenance window?')) return;
+    const res = await apiFetch('/api/maintenance-windows/' + id, { method: 'DELETE' });
+    if (!res || !res.ok) return alert('Error.');
+    loadMaintenanceWindows();
 }
 
 // ─── Users ─────────────────────────────────────────────────────────
@@ -387,10 +470,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!getToken()) { location.href = '/login'; return; }
     await loadServers();
     connectWs();
-    // Close modals on overlay click
-    ['server-modal-overlay','alert-modal-overlay','user-modal-overlay','history-modal-overlay','password-modal-overlay'].forEach(id => {
-        document.getElementById(id).addEventListener('click', (e) => {
-            if (e.target.id === id) e.target.classList.remove('active');
-        });
+    ['server-modal-overlay','alert-modal-overlay','user-modal-overlay','history-modal-overlay','password-modal-overlay','maintenance-modal-overlay'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('click', (e) => { if (e.target.id === id) e.target.classList.remove('active'); });
     });
 });
