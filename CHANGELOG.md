@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.4.0] - 2026-04-30
+
+### Added
+- **Maintenance Windows** — Mute alerts during scheduled downtime
+  - API: `GET/POST /api/maintenance-windows`
+  - Set start/end time + days of week per server
+- **SSL Certificate Expiry Monitoring** — New check type `ssl`
+  - Monitors days until SSL certificate expires
+  - Alert threshold for certificates expiring soon
+- **Ping/ICMP Checks** — New check type `ping`
+  - Uses system `ping` command for latency measurement
+- **Docker Container Monitoring** — New check type `docker`
+  - Lists running containers with status via Docker socket
+- **Service-Specific Health Checks** — Custom HTTP path + expected status code
+  - Set `health_path` (e.g., `/api/health`) and `expected_status` (e.g., `200`)
+- **Network Bandwidth Monitoring** — Via SSH: tracks RX/TX bytes and calculates bandwidth
+  - Reads `/proc/net/dev` to get interface statistics
+  - Calculates bandwidth rate (bytes/sec) between checks
+- **Database migrations** — Auto-adds new columns on startup for seamless upgrades
+
 ## [1.3.0] - 2026-04-30
 
 ### Added
