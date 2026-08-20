@@ -4,7 +4,7 @@ A modern, self-hosted network monitoring dashboard with real-time updates, SSH m
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Version](https://img.shields.io/badge/version-1.5.0-blue)
+![Version](https://img.shields.io/badge/version-1.5.1-blue)
 
 ## Features
 

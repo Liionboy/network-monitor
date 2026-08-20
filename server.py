@@ -9,39 +9,33 @@ SSL expiry, ping, Docker monitoring, bandwidth tracking.
 
 import asyncio
 import base64
-import calendar
 import hashlib
-import http.client
 import json
 import logging
 import os
 import secrets
-import shutil
 import smtplib
 import socket
 import sqlite3
 import ssl
-import struct
-import subprocess
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
-from email.mime.text import MIMEText
+from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Optional
 from urllib.parse import quote, urlparse
 
 import aiohttp
 import bcrypt
 import paramiko
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import FastAPI, WebSocket, HTTPException, Request
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from dotenv import load_dotenv
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -74,16 +68,16 @@ class ServerIn(BaseModel):
     name: str
     host: str
     check_type: str = "host"
-    target: Optional[str] = None
-    port: Optional[int] = None
+    target: str | None = None
+    port: int | None = None
     enabled: bool = True
-    ssh_user: Optional[str] = None
-    ssh_key: Optional[str] = None
-    ssh_password: Optional[str] = None
-    proxmox_token: Optional[str] = None
+    ssh_user: str | None = None
+    ssh_key: str | None = None
+    ssh_password: str | None = None
+    proxmox_token: str | None = None
     proxmox_verify_tls: bool = True
-    expected_status: Optional[int] = None
-    health_path: Optional[str] = None
+    expected_status: int | None = None
+    health_path: str | None = None
 
 class LoginIn(BaseModel):
     username: str
@@ -126,13 +120,13 @@ def _secret_cipher() -> Fernet:
     return Fernet(key)
 
 
-def encrypt_secret(value: Optional[str]) -> Optional[str]:
+def encrypt_secret(value: str | None) -> str | None:
     if not value:
         return None
     return ENCRYPTED_SECRET_PREFIX + _secret_cipher().encrypt(value.encode()).decode()
 
 
-def decrypt_secret(value: Optional[str]) -> Optional[str]:
+def decrypt_secret(value: str | None) -> str | None:
     if not value:
         return None
     if not value.startswith(ENCRYPTED_SECRET_PREFIX):
@@ -145,7 +139,7 @@ def decrypt_secret(value: Optional[str]) -> Optional[str]:
 
 
 def _login_rate_limit(client_ip: str) -> None:
-    failures, blocked_until = LOGIN_FAILURES.get(client_ip, (0, 0))
+    _failures, blocked_until = LOGIN_FAILURES.get(client_ip, (0, 0))
     if blocked_until > time.time():
         raise HTTPException(429, "Too many login attempts. Try again later.")
 
@@ -231,14 +225,14 @@ def init_db():
                        ("proxmox_token", "TEXT"), ("proxmox_verify_tls", "INTEGER NOT NULL DEFAULT 1")]:
         try:
             db.execute(f"ALTER TABLE servers ADD COLUMN {col} {dtype}")
-        except Exception:
-            pass
+        except sqlite3.OperationalError as exc:
+            logger.debug("Server schema column already exists or could not be added: %s", exc)
     for col, dtype in [("ping_ms", "REAL"), ("ssl_days", "INTEGER"), ("docker_status", "TEXT"),
                         ("rx_bytes", "REAL"), ("tx_bytes", "REAL"), ("bandwidth_rx", "REAL"), ("bandwidth_tx", "REAL")]:
         try:
             db.execute(f"ALTER TABLE checks ADD COLUMN {col} {dtype}")
-        except Exception:
-            pass
+        except sqlite3.OperationalError as exc:
+            logger.debug("Check schema column already exists or could not be added: %s", exc)
     for column in ("ssh_password", "proxmox_token"):
         stored = db.execute(f"SELECT id, {column} FROM servers WHERE {column} IS NOT NULL AND {column} != ''").fetchall()
         for server_id, value in stored:
@@ -295,7 +289,8 @@ class ConnectionManager:
         for ws, _ in self.connections:
             try:
                 await ws.send_json(payload)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - remove disconnected clients
+                logger.debug("WebSocket broadcast failed: %s", exc)
                 dead.append(ws)
         for ws in dead:
             self.disconnect(ws)
@@ -360,7 +355,7 @@ def send_alert_email(subject: str, body: str, server_name: str = "", metric: str
     if not all([SMTP_HOST, SMTP_USER, SMTP_PASS, ALERT_EMAIL]):
         return
     try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
         html = build_alert_html(server_name, metric, value, threshold, timestamp, top_processes)
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -378,8 +373,8 @@ def send_alert_email(subject: str, body: str, server_name: str = "", metric: str
                 server.login(SMTP_USER, SMTP_PASS)
                 server.sendmail(SMTP_USER, [ALERT_EMAIL], msg.as_string())
         logger.info(f"Alert email sent to {ALERT_EMAIL}")
-    except Exception as e:
-        logger.error(f"Failed to send alert email: {e}")
+    except Exception as exc:  # noqa: BLE001 - alert failures must not stop monitoring
+        logger.error("Failed to send alert email: %s", exc)
 
 
 def is_maintenance_window(server_id: int, db=None) -> bool:
@@ -387,7 +382,7 @@ def is_maintenance_window(server_id: int, db=None) -> bool:
     own_db = db is None
     if own_db:
         db = get_db()
-    now = datetime.now()
+    now = datetime.now(timezone.utc).astimezone().replace(tzinfo=None)
     current_weekday = now.weekday()  # 0=Mon
     current_minutes = now.hour * 60 + now.minute
     windows = db.execute(
@@ -440,7 +435,7 @@ def check_alerts(server_id: int, server_name: str, metrics: dict, db=None, top_p
             db.execute("UPDATE alert_rules SET last_triggered=? WHERE id=?", (now, rule_id))
             send_alert_email(
                 subject=f"[Network Monitor] ⚠️ {server_name} — {metric} exceeded",
-                body=f"Server: {server_name}\nMetric: {metric}\nCurrent value: {value}\nThreshold: {threshold}\n\nTime: {datetime.fromtimestamp(now).isoformat()}",
+                body=f"Server: {server_name}\nMetric: {metric}\nCurrent value: {value}\nThreshold: {threshold}\n\nTime: {datetime.fromtimestamp(now, timezone.utc).astimezone().replace(tzinfo=None).isoformat()}",
                 server_name=server_name,
                 metric=metric,
                 value=value,
@@ -452,22 +447,21 @@ def check_alerts(server_id: int, server_name: str, metrics: dict, db=None, top_p
 
 # ─── Check functions ────────────────────────────────────────────────
 
-async def check_http(url: str, expected_status: Optional[int] = None):
+async def check_http(url: str, expected_status: int | None = None):
     try:
         start = time.time()
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=aiohttp.ClientTimeout(total=10), ssl=False) as r:
-                online = r.status < 500
-                if expected_status and r.status != expected_status:
-                    online = False
-                    detail = f"HTTP {r.status} (expected {expected_status})"
-                else:
-                    detail = f"HTTP {r.status}"
-                return {"online": online, "response_ms": round((time.time() - start) * 1000, 1), "detail": detail, "status_code": r.status}
+        async with aiohttp.ClientSession() as s, s.get(url, timeout=aiohttp.ClientTimeout(total=10), ssl=False) as r:
+            online = r.status < 500
+            if expected_status and r.status != expected_status:
+                online = False
+                detail = f"HTTP {r.status} (expected {expected_status})"
+            else:
+                detail = f"HTTP {r.status}"
+            return {"online": online, "response_ms": round((time.time() - start) * 1000, 1), "detail": detail, "status_code": r.status}
     except asyncio.TimeoutError:
         return {"online": False, "response_ms": None, "detail": "Timeout", "status_code": None}
-    except Exception as e:
-        return {"online": False, "response_ms": None, "detail": str(e)[:120], "status_code": None}
+    except (aiohttp.ClientError, OSError, ValueError) as exc:
+        return {"online": False, "response_ms": None, "detail": str(exc)[:120], "status_code": None}
 
 async def check_tcp(host: str, port: int):
     try:
@@ -475,8 +469,8 @@ async def check_tcp(host: str, port: int):
         _, w = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5)
         w.close(); await w.wait_closed()
         return {"online": True, "response_ms": round((time.time() - start) * 1000, 1), "detail": f"TCP {port} open"}
-    except Exception as e:
-        return {"online": False, "response_ms": None, "detail": str(e)[:120]}
+    except (OSError, asyncio.TimeoutError) as exc:
+        return {"online": False, "response_ms": None, "detail": str(exc)[:120]}
 
 async def check_host(host: str):
     for port in (80, 443, 22, 8080, 3000, 8123):
@@ -485,8 +479,8 @@ async def check_host(host: str):
             _, w = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=3)
             w.close(); await w.wait_closed()
             return {"online": True, "response_ms": round((time.time() - start) * 1000, 1), "detail": f"Reachable on {port}"}
-        except Exception:
-            continue
+        except (OSError, asyncio.TimeoutError) as exc:
+            logger.debug("Host port check failed for %s:%s: %s", host, port, exc)
     return {"online": False, "response_ms": None, "detail": "Host unreachable"}
 
 async def check_ping(host: str):
@@ -498,14 +492,7 @@ async def check_ping(host: str):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, _ = await asyncio.wait_for(proc.wait(), timeout=5)
-        # Re-read output
-        proc2 = await asyncio.create_subprocess_exec(
-            *ping_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout_data, _ = await asyncio.wait_for(proc2.communicate(), timeout=5)
+        stdout_data, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
         output = stdout_data.decode()
         # Extract time
         ms = None
@@ -513,30 +500,29 @@ async def check_ping(host: str):
             if "time=" in line:
                 try:
                     ms = float(line.split("time=")[1].split(" ")[0])
-                except:
-                    pass
+                except (IndexError, ValueError) as exc:
+                    logger.debug("Unable to parse ping response: %s", exc)
         if ms is not None:
             return {"online": True, "response_ms": round(ms, 1), "ping_ms": round(ms, 1), "detail": f"Ping {round(ms,1)}ms"}
         return {"online": False, "response_ms": None, "ping_ms": None, "detail": "No ping response"}
-    except Exception as e:
-        return {"online": False, "response_ms": None, "ping_ms": None, "detail": str(e)[:120]}
+    except (OSError, asyncio.TimeoutError, ValueError) as exc:
+        return {"online": False, "response_ms": None, "ping_ms": None, "detail": str(exc)[:120]}
 
 
 def check_ssl_expiry(hostname: str, port: int = 443):
     """Check SSL certificate expiry days."""
     try:
         context = ssl.create_default_context()
-        with socket.create_connection((hostname, port), timeout=5) as sock:
-            with context.wrap_socket(sock, server_hostname=hostname) as ssock:
-                cert = ssock.getpeercert()
-                expiry = cert.get("notAfter")
-                if expiry:
-                    expiry_date = datetime.strptime(expiry, "%b %d %H:%M:%S %Y %Z")
-                    days_remaining = (expiry_date - datetime.utcnow()).days
-                    return {"online": True, "ssl_days": days_remaining, "detail": f"SSL expires in {days_remaining} days"}
+        with socket.create_connection((hostname, port), timeout=5) as sock, context.wrap_socket(sock, server_hostname=hostname) as ssock:
+            cert = ssock.getpeercert()
+            expiry = cert.get("notAfter")
+            if expiry:
+                expiry_date = datetime.strptime(expiry, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+                days_remaining = (expiry_date - datetime.now(timezone.utc)).days
+                return {"online": True, "ssl_days": days_remaining, "detail": f"SSL expires in {days_remaining} days"}
         return {"online": False, "ssl_days": None, "detail": "No SSL cert"}
-    except Exception as e:
-        return {"online": False, "ssl_days": None, "detail": str(e)[:120]}
+    except (OSError, ssl.SSLError, ValueError) as exc:
+        return {"online": False, "ssl_days": None, "detail": str(exc)[:120]}
 
 
 def docker_api_get(path: str):
@@ -563,10 +549,10 @@ def docker_api_get(path: str):
         body = response[header_end + 4:]
         try:
             return json.loads(body.decode())
-        except:
+        except json.JSONDecodeError:
             return None
-    except Exception as e:
-        logger.error(f"Docker API error: {e}")
+    except OSError as exc:
+        logger.error("Docker API error: %s", exc)
         return None
 
 
@@ -584,11 +570,11 @@ async def check_docker():
             status_lines.append(f"{name}: {state} ({status})")
         docker_status = "\n".join(status_lines) if status_lines else "No containers"
         return {"online": True, "docker_status": docker_status, "detail": f"{len(containers)} containers"}
-    except Exception as e:
-        return {"online": False, "docker_status": None, "detail": str(e)[:120]}
+    except (TypeError, ValueError, KeyError) as exc:
+        return {"online": False, "docker_status": None, "detail": str(exc)[:120]}
 
 
-def proxmox_url(target: Optional[str], host: str, port: Optional[int]) -> str:
+def proxmox_url(target: str | None, host: str, port: int | None) -> str:
     value = (target or f"https://{host}:{port or 8006}").strip()
     if not urlparse(value).scheme:
         value = "https://" + value
@@ -605,7 +591,7 @@ def proxmox_auth_header(token: str) -> str:
     return "PVEAPIToken=" + token
 
 
-async def check_proxmox(target: Optional[str], host: str, port: Optional[int], token: str, verify_tls: bool = True):
+async def check_proxmox(target: str | None, host: str, port: int | None, token: str, verify_tls: bool = True):
     """Read Proxmox node, VM and container state through the official API."""
     try:
         base_url = proxmox_url(target, host, port)
@@ -695,7 +681,7 @@ async def check_proxmox(target: Optional[str], host: str, port: Optional[int], t
             }
     except asyncio.TimeoutError:
         return {"online": False, "response_ms": None, "detail": "Proxmox API timeout"}
-    except Exception as exc:
+    except (aiohttp.ClientError, KeyError, TypeError, ValueError, RuntimeError) as exc:
         return {"online": False, "response_ms": None, "detail": str(exc)[:160]}
 
 
@@ -731,7 +717,7 @@ def get_ssh_metrics(host, port, user, key_path, password=None):
                 r["cpu_model"] = raw if raw else None
             elif label == "cpu":
                 try: r["cpu"] = float(raw)
-                except: r["cpu"] = 0.0
+                except ValueError: r["cpu"] = 0.0
             elif label == "ram":
                 p = raw.split()
                 if len(p) == 2:
@@ -744,7 +730,8 @@ def get_ssh_metrics(host, port, user, key_path, password=None):
                     r["disk_percent"] = round(int(p[0]) / int(p[1]) * 100, 1) if int(p[1]) > 0 else None
             elif label == "uptime":
                 try: r["uptime"] = float(raw)
-                except: pass
+                except ValueError as exc:
+                    logger.debug("Unable to parse SSH uptime: %s", exc)
             elif label == "load":
                 p = raw.split()
                 if len(p) == 3:
@@ -757,8 +744,8 @@ def get_ssh_metrics(host, port, user, key_path, password=None):
                 r["top_processes"] = raw
         ssh.close()
         r["online"] = True; r["detail"] = "SSH OK"
-    except Exception as e:
-        r["detail"] = str(e)[:120]
+    except (OSError, paramiko.SSHException, TypeError, ValueError) as exc:
+        r["detail"] = str(exc)[:120]
     return r
 
 
@@ -855,13 +842,13 @@ async def run_monitor_loop():
             db.execute("DELETE FROM alert_log WHERE timestamp < ?", (now - 30*86400,))
             db.commit(); db.close()
 
-            latest_status = {"servers": results, "timestamp": now, "timestamp_iso": datetime.now().isoformat()}
+            latest_status = {"servers": results, "timestamp": now, "timestamp_iso": datetime.now(timezone.utc).astimezone().replace(tzinfo=None).isoformat()}
             await manager.broadcast({"type": "status_update", "data": latest_status})
             await asyncio.sleep(CHECK_INTERVAL)
         except asyncio.CancelledError:
             break
-        except Exception as e:
-            logger.error(f"monitor: {e}"); await asyncio.sleep(5)
+        except Exception as exc:  # noqa: BLE001 - keep the monitor loop alive
+            logger.error("monitor: %s", exc); await asyncio.sleep(5)
 
 # ─── App ────────────────────────────────────────────────────────────
 
@@ -877,7 +864,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Network Monitor API",
     description="Modern self-hosted network monitoring dashboard with real-time WebSocket updates, SSH metrics, and alerting.",
-    version="1.5.0",
+    version="1.5.1",
     lifespan=lifespan,
 )
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -936,7 +923,7 @@ async def check_auth_ep(request: Request):
 
 @app.get("/api/health", tags=["system"])
 async def health():
-    return {"status": "ok", "timestamp": datetime.now().isoformat(), "version": "1.5.0"}
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).astimezone().replace(tzinfo=None).isoformat(), "version": "1.5.1"}
 
 # ─── Servers API ────────────────────────────────────────────────────
 
@@ -1193,7 +1180,8 @@ async def ws_endpoint(ws: WebSocket):
         manager.connections.append((ws, token))
         while True:
             await ws.receive_text()
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - disconnect cleanup must always run
+        logger.debug("WebSocket closed: %s", exc)
         manager.disconnect(ws)
 
 # ─── Main ───────────────────────────────────────────────────────────
