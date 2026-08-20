@@ -49,8 +49,8 @@
     </form>
   </div>
   <script>
-    // If already logged in, go straight to dashboard
-    if (localStorage.getItem('netmon_token')) location.href = '/';
+    // If already logged in, go straight to dashboard.
+    fetch('/api/check-auth', {credentials: 'same-origin'}).then(r => r.json()).then(data => { if (data.authed) location.href = '/'; });
     document.getElementById('f').addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const btn = ev.target.querySelector('.btn');
@@ -63,8 +63,6 @@
           body: JSON.stringify({username: document.getElementById('u').value, password: document.getElementById('p').value})
         });
         if (res.ok) {
-          const data = await res.json();
-          localStorage.setItem('netmon_token', data.token);
           location.href = '/';
         } else {
           err.textContent = 'Invalid username or password.';

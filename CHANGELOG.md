@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.5.0] - 2026-08-21
+
+### Added
+- Real Proxmox VE API monitoring for node status, resource usage, and virtual machine/container data.
+
+### Changed
+- Reworked authentication to use safer HttpOnly cookie sessions with rate limiting and cache-control headers.
+- Added encrypted storage for integration credentials and improved SSH/TLS handling.
+- Added frontend cache busting to prevent stale authentication code from causing refresh loops.
+
 ## [1.4.0] - 2026-04-30
 
 ### Added

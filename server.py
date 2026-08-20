@@ -8,7 +8,9 @@ SSL expiry, ping, Docker monitoring, bandwidth tracking.
 """
 
 import asyncio
+import base64
 import calendar
+import hashlib
 import http.client
 import json
 import logging
@@ -28,12 +30,14 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote, urlparse
 
 import aiohttp
 import bcrypt
 import paramiko
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import FastAPI, WebSocket, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -48,6 +52,14 @@ DB_PATH = Path(os.environ.get("DB_PATH", str(BASE_DIR / "monitor.db")))
 SESSIONS: dict[str, dict] = {}  # token -> {user_id, username, role, expires}
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "20"))
 DOCKER_SOCKET = os.environ.get("DOCKER_SOCKET", "/var/run/docker.sock")
+SESSION_TTL = int(os.environ.get("NETMON_SESSION_HOURS", "24")) * 3600
+INITIAL_ADMIN_USER = os.environ.get("NETMON_USER", "admin").strip() or "admin"
+INITIAL_ADMIN_PASS = os.environ.get("NETMON_PASS", "").strip()
+NETMON_SECRET = os.environ.get("NETMON_SECRET", "").strip()
+NETMON_SECURE_COOKIES = os.environ.get("NETMON_SECURE_COOKIES", "false").lower() in {"1", "true", "yes", "on"}
+SSH_KNOWN_HOSTS = os.environ.get("NETMON_SSH_KNOWN_HOSTS", "~/.ssh/known_hosts")
+ENCRYPTED_SECRET_PREFIX = "enc:v1:"
+LOGIN_FAILURES: dict[str, tuple[int, float]] = {}
 
 # Email alerting config
 SMTP_HOST = os.environ.get("NETMON_SMTP_HOST", "")
@@ -68,6 +80,8 @@ class ServerIn(BaseModel):
     ssh_user: Optional[str] = None
     ssh_key: Optional[str] = None
     ssh_password: Optional[str] = None
+    proxmox_token: Optional[str] = None
+    proxmox_verify_tls: bool = True
     expected_status: Optional[int] = None
     health_path: Optional[str] = None
 
@@ -104,7 +118,49 @@ def get_db():
     conn.execute("PRAGMA busy_timeout=30000")
     return conn
 
+
+def _secret_cipher() -> Fernet:
+    if len(NETMON_SECRET) < 32:
+        raise RuntimeError("NETMON_SECRET must be set and contain at least 32 characters")
+    key = base64.urlsafe_b64encode(hashlib.sha256(NETMON_SECRET.encode()).digest())
+    return Fernet(key)
+
+
+def encrypt_secret(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return ENCRYPTED_SECRET_PREFIX + _secret_cipher().encrypt(value.encode()).decode()
+
+
+def decrypt_secret(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    if not value.startswith(ENCRYPTED_SECRET_PREFIX):
+        return value  # Existing installations are migrated during init_db().
+    try:
+        return _secret_cipher().decrypt(value[len(ENCRYPTED_SECRET_PREFIX):].encode()).decode()
+    except (InvalidToken, UnicodeDecodeError, ValueError) as exc:
+        logger.error("Unable to decrypt a stored monitoring secret: %s", exc.__class__.__name__)
+        return None
+
+
+def _login_rate_limit(client_ip: str) -> None:
+    failures, blocked_until = LOGIN_FAILURES.get(client_ip, (0, 0))
+    if blocked_until > time.time():
+        raise HTTPException(429, "Too many login attempts. Try again later.")
+
+
+def _record_login_failure(client_ip: str) -> None:
+    failures, _ = LOGIN_FAILURES.get(client_ip, (0, 0))
+    failures += 1
+    LOGIN_FAILURES[client_ip] = (failures, time.time() + 300 if failures >= 5 else 0)
+
+
+def _clear_login_failures(client_ip: str) -> None:
+    LOGIN_FAILURES.pop(client_ip, None)
+
 def init_db():
+    _secret_cipher()
     db = get_db()
     db.executescript("""
         CREATE TABLE IF NOT EXISTS users (
@@ -121,6 +177,7 @@ def init_db():
             target TEXT, port INTEGER,
             enabled INTEGER NOT NULL DEFAULT 1,
             ssh_user TEXT, ssh_key TEXT, ssh_password TEXT,
+            proxmox_token TEXT, proxmox_verify_tls INTEGER NOT NULL DEFAULT 1,
             cpu_model TEXT,
             expected_status INTEGER,
             health_path TEXT,
@@ -170,7 +227,8 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alert_log(timestamp);
     """)
     # Migrate columns if missing
-    for col, dtype in [("cpu_model", "TEXT"), ("expected_status", "INTEGER"), ("health_path", "TEXT")]:
+    for col, dtype in [("cpu_model", "TEXT"), ("expected_status", "INTEGER"), ("health_path", "TEXT"),
+                       ("proxmox_token", "TEXT"), ("proxmox_verify_tls", "INTEGER NOT NULL DEFAULT 1")]:
         try:
             db.execute(f"ALTER TABLE servers ADD COLUMN {col} {dtype}")
         except Exception:
@@ -181,11 +239,20 @@ def init_db():
             db.execute(f"ALTER TABLE checks ADD COLUMN {col} {dtype}")
         except Exception:
             pass
-    existing = db.execute("SELECT id FROM users WHERE username='admin'").fetchone()
+    for column in ("ssh_password", "proxmox_token"):
+        stored = db.execute(f"SELECT id, {column} FROM servers WHERE {column} IS NOT NULL AND {column} != ''").fetchall()
+        for server_id, value in stored:
+            if not value.startswith(ENCRYPTED_SECRET_PREFIX):
+                db.execute(f"UPDATE servers SET {column}=? WHERE id=?", (encrypt_secret(value), server_id))
+
+    existing = db.execute("SELECT id FROM users WHERE username=?", (INITIAL_ADMIN_USER,)).fetchone()
     if not existing:
-        pw_hash = bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode()
+        if len(INITIAL_ADMIN_PASS) < 12:
+            db.close()
+            raise RuntimeError("NETMON_PASS must be set and contain at least 12 characters")
+        pw_hash = bcrypt.hashpw(INITIAL_ADMIN_PASS.encode(), bcrypt.gensalt()).decode()
         db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)",
-                   ("admin", pw_hash, "admin", time.time()))
+                   (INITIAL_ADMIN_USER, pw_hash, "admin", time.time()))
     db.commit()
     db.close()
 
@@ -521,6 +588,117 @@ async def check_docker():
         return {"online": False, "docker_status": None, "detail": str(e)[:120]}
 
 
+def proxmox_url(target: Optional[str], host: str, port: Optional[int]) -> str:
+    value = (target or f"https://{host}:{port or 8006}").strip()
+    if not urlparse(value).scheme:
+        value = "https://" + value
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Proxmox target must be an HTTP(S) URL")
+    return value.rstrip("/")
+
+
+def proxmox_auth_header(token: str) -> str:
+    token = (token or "").strip()
+    if "=" not in token or "!" not in token.split("=", 1)[0]:
+        raise ValueError("Proxmox token must use user@realm!tokenid=uuid format")
+    return "PVEAPIToken=" + token
+
+
+async def check_proxmox(target: Optional[str], host: str, port: Optional[int], token: str, verify_tls: bool = True):
+    """Read Proxmox node, VM and container state through the official API."""
+    try:
+        base_url = proxmox_url(target, host, port)
+        headers = {"Authorization": proxmox_auth_header(token)}
+        timeout = aiohttp.ClientTimeout(total=15)
+        connector = aiohttp.TCPConnector(ssl=verify_tls)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers, connector=connector) as session:
+            started = time.time()
+
+            async def get_json(path):
+                async with session.get(base_url + "/api2/json" + path) as response:
+                    payload = await response.json(content_type=None)
+                    if response.status >= 400:
+                        message = payload.get("errors") if isinstance(payload, dict) else payload
+                        raise RuntimeError(f"Proxmox API HTTP {response.status}: {message}")
+                    return payload.get("data", payload) if isinstance(payload, dict) else payload
+
+            node_rows = await get_json("/nodes")
+            nodes = []
+            vms_total = vms_running = lxc_total = lxc_running = 0
+            memory_used = memory_total = disk_used = disk_total = 0
+            cpu_values = []
+            load_values = []
+            uptime_values = []
+            for node in node_rows if isinstance(node_rows, list) else []:
+                node_name = str(node.get("node", ""))
+                if not node_name:
+                    continue
+                safe_node = quote(node_name, safe="")
+                status = await get_json(f"/nodes/{safe_node}/status")
+                qemu = await get_json(f"/nodes/{safe_node}/qemu")
+                lxc = await get_json(f"/nodes/{safe_node}/lxc")
+                node_status = str(status.get("status", node.get("status", "unknown"))).lower()
+                vms = qemu if isinstance(qemu, list) else []
+                containers = lxc if isinstance(lxc, list) else []
+                vms_total += len(vms)
+                vms_running += sum(1 for item in vms if item.get("status") == "running")
+                lxc_total += len(containers)
+                lxc_running += sum(1 for item in containers if item.get("status") == "running")
+                memory = status.get("memory") or {}
+                rootfs = status.get("rootfs") or {}
+                memory_used += int(memory.get("used") or 0)
+                memory_total += int(memory.get("total") or 0)
+                disk_used += int(rootfs.get("used") or 0)
+                disk_total += int(rootfs.get("total") or 0)
+                if status.get("cpu") is not None:
+                    cpu_values.append(float(status["cpu"]) * 100)
+                load = status.get("loadavg") or []
+                if isinstance(load, list) and load:
+                    load_values.append(float(load[0]))
+                if status.get("uptime") is not None:
+                    uptime_values.append(float(status["uptime"]))
+                nodes.append({
+                    "node": node_name,
+                    "status": node_status,
+                    "cpu": round(float(status.get("cpu") or 0) * 100, 1),
+                    "memory_used": memory.get("used"),
+                    "memory_total": memory.get("total"),
+                    "uptime": status.get("uptime"),
+                })
+
+            online_nodes = sum(1 for node in nodes if node["status"] == "online")
+            if not nodes:
+                raise RuntimeError("No Proxmox nodes returned")
+            ram_percent = round(memory_used / memory_total * 100, 1) if memory_total else None
+            disk_percent = round(disk_used / disk_total * 100, 1) if disk_total else None
+            return {
+                "online": online_nodes > 0,
+                "response_ms": round((time.time() - started) * 1000, 1),
+                "cpu": round(sum(cpu_values) / len(cpu_values), 1) if cpu_values else None,
+                "ram_used": memory_used or None,
+                "ram_total": memory_total or None,
+                "ram_percent": ram_percent,
+                "disk_used": disk_used or None,
+                "disk_total": disk_total or None,
+                "disk_percent": disk_percent,
+                "uptime": max(uptime_values) if uptime_values else None,
+                "load_1": round(sum(load_values) / len(load_values), 2) if load_values else None,
+                "proxmox_nodes": nodes,
+                "proxmox_online_nodes": online_nodes,
+                "proxmox_node_count": len(nodes),
+                "proxmox_vms_total": vms_total,
+                "proxmox_vms_running": vms_running,
+                "proxmox_lxc_total": lxc_total,
+                "proxmox_lxc_running": lxc_running,
+                "detail": f"{online_nodes}/{len(nodes)} nodes online; {vms_running}/{vms_total} VMs; {lxc_running}/{lxc_total} containers",
+            }
+    except asyncio.TimeoutError:
+        return {"online": False, "response_ms": None, "detail": "Proxmox API timeout"}
+    except Exception as exc:
+        return {"online": False, "response_ms": None, "detail": str(exc)[:160]}
+
+
 def get_ssh_metrics(host, port, user, key_path, password=None):
     r = {"online": False, "response_ms": None, "cpu": None, "cpu_model": None, "ram_used": None, "ram_total": None,
          "ram_percent": None, "disk_used": None, "disk_total": None, "disk_percent": None,
@@ -529,7 +707,10 @@ def get_ssh_metrics(host, port, user, key_path, password=None):
          "detail": ""}
     try:
         ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.load_system_host_keys()
+        if SSH_KNOWN_HOSTS and os.path.exists(os.path.expanduser(SSH_KNOWN_HOSTS)):
+            ssh.load_host_keys(os.path.expanduser(SSH_KNOWN_HOSTS))
+        ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
         start = time.time()
         if key_path:
             ssh.connect(host, port=port, username=user, key_filename=os.path.expanduser(key_path), timeout=10)
@@ -604,7 +785,7 @@ async def run_monitor_loop():
             for row in rows:
                 ct = row["check_type"]
                 if ct == "ssh":
-                    s = await check_ssh(row["host"], row.get("port") or 22, row.get("ssh_user") or "root", row.get("ssh_key"), row.get("ssh_password"))
+                    s = await check_ssh(row["host"], row.get("port") or 22, row.get("ssh_user") or "root", row.get("ssh_key"), decrypt_secret(row.get("ssh_password")))
                 elif ct == "http":
                     target = row.get("target") or f"http://{row['host']}"
                     if row.get("health_path"):
@@ -623,6 +804,12 @@ async def run_monitor_loop():
                     s = check_ssl_expiry(row["host"], row.get("port") or 443)
                 elif ct == "docker":
                     s = await check_docker()
+                elif ct == "proxmox":
+                    s = await check_proxmox(
+                        row.get("target"), row["host"], row.get("port"),
+                        decrypt_secret(row.get("proxmox_token")) or "",
+                        bool(row.get("proxmox_verify_tls", 1)),
+                    )
                 else:
                     s = await check_host(row["host"])
                 check_rows.append((row, s))
@@ -690,7 +877,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Network Monitor API",
     description="Modern self-hosted network monitoring dashboard with real-time WebSocket updates, SSH metrics, and alerting.",
-    version="1.4.0",
+    version="1.5.0",
     lifespan=lifespan,
 )
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -699,24 +886,45 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def index():
-    return (BASE_DIR / "static" / "index.html").read_text()
+    response = HTMLResponse((BASE_DIR / "static" / "index.html").read_text())
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return response
 
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
 async def login_page():
-    return (BASE_DIR / "static" / "login.html").read_text()
+    response = HTMLResponse((BASE_DIR / "static" / "login.html").read_text())
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return response
 
 # ─── Auth API ───────────────────────────────────────────────────────
 
 @app.post("/api/login", tags=["auth"])
-async def api_login(body: LoginIn):
+async def api_login(request: Request, body: LoginIn):
+    client_ip = request.client.host if request.client else "unknown"
+    _login_rate_limit(client_ip)
     db = get_db(); db.row_factory = sqlite3.Row
     user = db.execute("SELECT * FROM users WHERE username=?", (body.username,)).fetchone()
     db.close()
     if user and verify_password(body.password, user["password_hash"]):
+        _clear_login_failures(client_ip)
         token = secrets.token_hex(32)
-        SESSIONS[token] = {"user_id": user["id"], "username": user["username"], "role": user["role"], "expires": time.time() + 86400}
-        return {"ok": True, "token": token, "role": user["role"]}
+        SESSIONS[token] = {"user_id": user["id"], "username": user["username"], "role": user["role"], "expires": time.time() + SESSION_TTL}
+        response = JSONResponse({"ok": True, "username": user["username"], "role": user["role"]})
+        response.set_cookie("netmon_token", token, max_age=SESSION_TTL, httponly=True,
+                            secure=NETMON_SECURE_COOKIES, samesite="lax", path="/")
+        return response
+    _record_login_failure(client_ip)
     raise HTTPException(401, "Invalid credentials")
+
+
+@app.post("/api/logout", tags=["auth"])
+async def api_logout(request: Request):
+    token = request.headers.get("x-session") or request.cookies.get("netmon_token")
+    if token:
+        SESSIONS.pop(token, None)
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("netmon_token", path="/")
+    return response
 
 @app.get("/api/check-auth", tags=["auth"])
 async def check_auth_ep(request: Request):
@@ -728,7 +936,7 @@ async def check_auth_ep(request: Request):
 
 @app.get("/api/health", tags=["system"])
 async def health():
-    return {"status": "ok", "timestamp": datetime.now().isoformat(), "version": "1.4.0"}
+    return {"status": "ok", "timestamp": datetime.now().isoformat(), "version": "1.5.0"}
 
 # ─── Servers API ────────────────────────────────────────────────────
 
@@ -737,37 +945,57 @@ async def list_servers(request: Request):
     is_authed(request)
     db = get_db(); db.row_factory = sqlite3.Row
     rows = [dict(r) for r in db.execute(
-        "SELECT id,name,host,check_type,target,port,enabled,ssh_user,ssh_key,expected_status,health_path,created_at,updated_at FROM servers ORDER BY name"
+        "SELECT id,name,host,check_type,target,port,enabled,ssh_user,ssh_key,expected_status,health_path,"
+        "proxmox_verify_tls, ssh_password IS NOT NULL AS has_ssh_password, "
+        "proxmox_token IS NOT NULL AS has_proxmox_token, created_at,updated_at FROM servers ORDER BY name"
     ).fetchall()]
     db.close()
     return rows
 
 @app.post("/api/servers", tags=["servers"])
 async def create_server(request: Request, server: ServerIn):
-    is_authed(request)
+    require_admin(request)
+    if server.check_type not in {"host", "http", "https", "tcp", "ssh", "ping", "ssl", "docker", "proxmox"}:
+        raise HTTPException(400, "Unsupported check type")
+    if server.check_type == "proxmox" and not server.proxmox_token:
+        raise HTTPException(400, "A Proxmox API token is required")
     now = time.time(); db = get_db()
     cur = db.execute(
-        "INSERT INTO servers(name,host,check_type,target,port,enabled,ssh_user,ssh_key,ssh_password,expected_status,health_path,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO servers(name,host,check_type,target,port,enabled,ssh_user,ssh_key,ssh_password,proxmox_token,proxmox_verify_tls,expected_status,health_path,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (server.name, server.host, server.check_type, server.target, server.port, int(server.enabled),
-         server.ssh_user, server.ssh_key, server.ssh_password, server.expected_status, server.health_path, now, now))
+         server.ssh_user, server.ssh_key, encrypt_secret(server.ssh_password), encrypt_secret(server.proxmox_token),
+         int(server.proxmox_verify_tls), server.expected_status, server.health_path, now, now))
     db.commit(); new_id = cur.lastrowid; db.close()
     return {"ok": True, "id": new_id}
 
 @app.put("/api/servers/{sid}", tags=["servers"])
 async def update_server(request: Request, sid: int, server: ServerIn):
-    is_authed(request)
+    require_admin(request)
     db = get_db()
+    existing = db.execute("SELECT ssh_password, proxmox_token FROM servers WHERE id=?", (sid,)).fetchone()
+    if not existing:
+        db.close()
+        raise HTTPException(404, "Not found")
+    if server.check_type not in {"host", "http", "https", "tcp", "ssh", "ping", "ssl", "docker", "proxmox"}:
+        db.close()
+        raise HTTPException(400, "Unsupported check type")
+    if server.check_type == "proxmox" and not (server.proxmox_token or existing[1]):
+        db.close()
+        raise HTTPException(400, "A Proxmox API token is required")
+    ssh_password = encrypt_secret(server.ssh_password) if server.ssh_password else existing[0]
+    proxmox_token = encrypt_secret(server.proxmox_token) if server.proxmox_token else existing[1]
     cur = db.execute(
-        "UPDATE servers SET name=?,host=?,check_type=?,target=?,port=?,enabled=?,ssh_user=?,ssh_key=?,ssh_password=?,expected_status=?,health_path=?,updated_at=? WHERE id=?",
+        "UPDATE servers SET name=?,host=?,check_type=?,target=?,port=?,enabled=?,ssh_user=?,ssh_key=?,ssh_password=?,proxmox_token=?,proxmox_verify_tls=?,expected_status=?,health_path=?,updated_at=? WHERE id=?",
         (server.name, server.host, server.check_type, server.target, server.port, int(server.enabled),
-         server.ssh_user, server.ssh_key, server.ssh_password, server.expected_status, server.health_path, time.time(), sid))
+         server.ssh_user, server.ssh_key, ssh_password, proxmox_token, int(server.proxmox_verify_tls),
+         server.expected_status, server.health_path, time.time(), sid))
     db.commit(); db.close()
     if cur.rowcount == 0: raise HTTPException(404, "Not found")
     return {"ok": True}
 
 @app.delete("/api/servers/{sid}", tags=["servers"])
 async def delete_server(request: Request, sid: int):
-    is_authed(request)
+    require_admin(request)
     db = get_db(); db.execute("DELETE FROM checks WHERE server_id=?", (sid,))
     db.execute("DELETE FROM alert_rules WHERE server_id=?", (sid,))
     db.execute("DELETE FROM alert_log WHERE server_id=?", (sid,))
@@ -816,7 +1044,7 @@ async def list_alert_rules(request: Request):
 
 @app.post("/api/alert-rules", tags=["alerts"])
 async def create_alert_rule(request: Request, rule: AlertRuleIn):
-    is_authed(request)
+    require_admin(request)
     db = get_db()
     cur = db.execute("INSERT INTO alert_rules(server_id,metric,threshold,enabled) VALUES(?,?,?,?)",
                      (rule.server_id, rule.metric, rule.threshold, int(rule.enabled)))
@@ -825,7 +1053,7 @@ async def create_alert_rule(request: Request, rule: AlertRuleIn):
 
 @app.delete("/api/alert-rules/{rid}", tags=["alerts"])
 async def delete_alert_rule(request: Request, rid: int):
-    is_authed(request)
+    require_admin(request)
     db = get_db(); cur = db.execute("DELETE FROM alert_rules WHERE id=?", (rid,))
     db.commit(); db.close()
     if cur.rowcount == 0: raise HTTPException(404, "Not found")
@@ -851,7 +1079,7 @@ async def get_server_alerts(request: Request, sid: int):
 
 @app.put("/api/servers/{sid}/alerts", tags=["alerts"])
 async def save_server_alerts(request: Request, sid: int, body: ServerAlertsIn):
-    is_authed(request)
+    require_admin(request)
     db = get_db()
     server = db.execute("SELECT name FROM servers WHERE id=?", (sid,)).fetchone()
     if not server:
@@ -878,7 +1106,7 @@ async def list_maintenance_windows(request: Request):
 
 @app.post("/api/maintenance-windows", tags=["maintenance"])
 async def create_maintenance_window(request: Request, window: MaintenanceWindowIn):
-    is_authed(request)
+    require_admin(request)
     db = get_db()
     cur = db.execute(
         "INSERT INTO maintenance_windows(server_id,start_hour,start_minute,end_hour,end_minute,days_of_week,enabled) VALUES(?,?,?,?,?,?,?)",
@@ -888,7 +1116,7 @@ async def create_maintenance_window(request: Request, window: MaintenanceWindowI
 
 @app.delete("/api/maintenance-windows/{wid}", tags=["maintenance"])
 async def delete_maintenance_window(request: Request, wid: int):
-    is_authed(request)
+    require_admin(request)
     db = get_db(); cur = db.execute("DELETE FROM maintenance_windows WHERE id=?", (wid,))
     db.commit(); db.close()
     if cur.rowcount == 0: raise HTTPException(404, "Not found")
@@ -958,7 +1186,7 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     try:
         msg = await asyncio.wait_for(ws.receive_json(), timeout=5)
-        token = msg.get("token")
+        token = msg.get("token") or ws.cookies.get("netmon_token")
         if not token or token not in SESSIONS or SESSIONS[token]["expires"] < time.time():
             await ws.send_json({"type": "auth_error"}); await ws.close(); return
         await ws.send_json({"type": "status_update", "data": latest_status})

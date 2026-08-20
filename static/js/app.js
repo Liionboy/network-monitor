@@ -2,11 +2,14 @@ let ws = null;
 let currentStatus = { servers: [] };
 let serversCache = [];
 
-function getToken() { return localStorage.getItem('netmon_token'); }
-function logout() { localStorage.removeItem('netmon_token'); location.href = '/login'; }
+function getToken() { return ''; }
+function logout() {
+    fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).finally(() => { location.href = '/login'; });
+}
 
 async function apiFetch(url, opts = {}) {
-    opts.headers = { ...(opts.headers || {}), 'x-session': getToken() || '' };
+    opts.headers = { ...(opts.headers || {}) };
+    opts.credentials = 'same-origin';
     const res = await fetch(url, opts);
     if (res.status === 401) { logout(); return null; }
     return res;
@@ -39,7 +42,7 @@ function connectWs() {
     ws.onopen = () => {
         document.getElementById('ws-status').className = 'connection-status connected';
         document.getElementById('ws-status').querySelector('.label').textContent = 'Live';
-        ws.send(JSON.stringify({ token: getToken() }));
+        ws.send(JSON.stringify({}));
     };
     ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
@@ -120,6 +123,15 @@ function renderDashboard() {
                 '<div class="metric"><span class="metric-label">Latency</span><span class="metric-value">'+(s.ping_ms?s.ping_ms.toFixed(1)+' ms':'-')+'</span></div></div>';
         } else if (s.check_type === 'docker' && s.online) {
             m = '<div class="info-row" style="max-height:100px;overflow-y:auto;font-size:11px;font-family:monospace;white-space:pre;color:#94a3b8;background:#0f172a;padding:8px;border-radius:6px;margin-top:4px;">'+esc(s.docker_status || 'No containers')+'</div>';
+        } else if (s.check_type === 'proxmox' && s.online) {
+            m = '<div class="metrics-row">'+
+                '<div class="metric"><span class="metric-label">Nodes</span><span class="metric-value">'+(s.proxmox_online_nodes||0)+'/'+(s.proxmox_node_count||0)+'</span></div>'+
+                '<div class="metric"><span class="metric-label">VMs</span><span class="metric-value">'+(s.proxmox_vms_running||0)+'/'+(s.proxmox_vms_total||0)+'</span></div>'+
+                '<div class="metric"><span class="metric-label">LXC</span><span class="metric-value">'+(s.proxmox_lxc_running||0)+'/'+(s.proxmox_lxc_total||0)+'</span></div></div>'+
+                '<div class="info-row"><span>RAM: <b>'+fmtBytes(s.ram_used)+' / '+fmtBytes(s.ram_total)+'</b></span><span>Load: <b>'+(s.load_1!=null?s.load_1:'-')+'</b></span></div>';
+            if (s.proxmox_nodes) {
+                m += '<div class="info-row" style="font-size:11px;">'+s.proxmox_nodes.map(n => '<span>'+esc(n.node)+': <b>'+esc(n.status)+'</b></span>').join('')+'</div>';
+            }
         }
         if (s.health_path) {
             m += '<div class="info-row"><span>Health: <b>'+esc(s.health_path)+'</b>'+(s.expected_status?' → expect '+s.expected_status:'')+'</span></div>';
@@ -169,6 +181,8 @@ function editServer(s) {
     document.getElementById('f-ssh-password').value = '';
     document.getElementById('f-health-path').value = s.health_path || '';
     document.getElementById('f-expected-status').value = s.expected_status || '';
+    document.getElementById('f-proxmox-token').value = '';
+    document.getElementById('f-proxmox-verify-tls').checked = s.proxmox_verify_tls !== false && s.proxmox_verify_tls !== 0;
     document.getElementById('f-enabled').checked = !!s.enabled;
     toggleCheckFields();
     document.getElementById('server-modal-overlay').classList.add('active');
@@ -177,9 +191,12 @@ function editServer(s) {
 function toggleCheckFields() {
     const t = document.getElementById('f-check-type').value;
     document.getElementById('port-wrap').classList.toggle('hidden', t !== 'tcp' && t !== 'ssh' && t !== 'ssl');
-    document.getElementById('target-wrap').classList.toggle('hidden', t !== 'http' && t !== 'https');
+    document.getElementById('target-wrap').classList.toggle('hidden', t !== 'http' && t !== 'https' && t !== 'proxmox');
+    if (t === 'proxmox') document.querySelector('#target-wrap span').textContent = 'Proxmox API URL';
+    else document.querySelector('#target-wrap span').textContent = 'Custom URL';
     document.getElementById('ssh-fields').classList.toggle('hidden', t !== 'ssh');
     document.getElementById('health-fields').classList.toggle('hidden', t !== 'http' && t !== 'https');
+    document.getElementById('proxmox-fields').classList.toggle('hidden', t !== 'proxmox');
 }
 
 // ─── Server CRUD ───────────────────────────────────────────────────
@@ -196,6 +213,8 @@ document.getElementById('server-form').addEventListener('submit', async (e) => {
         ssh_user: document.getElementById('f-ssh-user').value.trim() || null,
         ssh_key: document.getElementById('f-ssh-key').value.trim() || null,
         ssh_password: document.getElementById('f-ssh-password').value || null,
+        proxmox_token: document.getElementById('f-proxmox-token').value || null,
+        proxmox_verify_tls: document.getElementById('f-proxmox-verify-tls').checked,
         health_path: document.getElementById('f-health-path').value.trim() || null,
         expected_status: document.getElementById('f-expected-status').value ? Number(document.getElementById('f-expected-status').value) : null,
         enabled: document.getElementById('f-enabled').checked,
@@ -467,7 +486,8 @@ document.getElementById('password-form').addEventListener('submit', async (e) =>
 // ─── Init ──────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
-    if (!getToken()) { location.href = '/login'; return; }
+    const auth = await fetch('/api/check-auth', { credentials: 'same-origin' });
+    if (!auth.ok || !(await auth.json()).authed) { location.href = '/login'; return; }
     await loadServers();
     connectWs();
     ['server-modal-overlay','alert-modal-overlay','user-modal-overlay','history-modal-overlay','password-modal-overlay','maintenance-modal-overlay'].forEach(id => {

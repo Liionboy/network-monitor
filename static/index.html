@@ -10,7 +10,7 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/style.css?v=1.4.0" />
+  <link rel="stylesheet" href="/static/css/style.css?v=1.5.0" />
 </head>
 <body>
   <div class="app">
@@ -137,6 +137,7 @@
             <option value="ping">Ping / ICMP</option>
             <option value="ssl">SSL Certificate</option>
             <option value="docker">Docker Containers</option>
+            <option value="proxmox">Proxmox VE API</option>
           </select>
         </label>
         <label id="target-wrap" class="hidden"><span>Custom URL</span><input id="f-target" placeholder="https://example.com/health" /></label>
@@ -151,6 +152,11 @@
           <div class="section-title">Health Check</div>
           <label><span>Health Path</span><input id="f-health-path" placeholder="/api/health" /></label>
           <label><span>Expected Status Code</span><input id="f-expected-status" type="number" min="100" max="599" placeholder="200" /></label>
+        </div>
+        <div id="proxmox-fields" class="hidden">
+          <div class="section-title">Proxmox API</div>
+          <label><span>API Token</span><input id="f-proxmox-token" type="password" autocomplete="new-password" placeholder="user@pam!monitor=uuid (blank keeps current)" /></label>
+          <label class="checkbox-row"><input id="f-proxmox-verify-tls" type="checkbox" checked /> <span>Verify TLS certificate</span></label>
         </div>
         <label class="checkbox-row"><input id="f-enabled" type="checkbox" checked /> <span>Enabled</span></label>
         <div class="form-actions">
@@ -252,6 +258,6 @@
     </div>
   </div>
 
-  <script src="/static/js/app.js?v=1.4.0"></script>
+  <script src="/static/js/app.js?v=1.4.1"></script>
 </body>
 </html>

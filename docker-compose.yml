@@ -7,13 +7,14 @@ services:
     restart: unless-stopped
     ports:
       - "8765:8765"
-    environment:
-      - NETMON_USER=admin
-      - NETMON_PASS=netmon2026
-      - NETMON_PORT=8765
+    env_file:
+      - .env
     volumes:
       - monitor-data:/app/data
-      - ${HOME}/.ssh:/root/.ssh:ro
+      # Mount a curated known_hosts file for SSH checks. Unknown host keys are rejected.
+      # - ./known_hosts:/etc/netmon/known_hosts:ro
+      # Docker monitoring is opt-in because the socket grants host-admin access.
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
 
 volumes:
   monitor-data:

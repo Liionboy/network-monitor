@@ -4,12 +4,12 @@ A modern, self-hosted network monitoring dashboard with real-time updates, SSH m
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.5.0-blue)
 
 ## Features
 
 - **Real-time monitoring** via WebSocket — instant updates without page refresh
-- **Multiple check types**: Host reachability, HTTP, HTTPS, TCP port, SSH with full system metrics
+- **Multiple check types**: Host reachability, HTTP, HTTPS, TCP port, SSH with full system metrics, Docker, and Proxmox VE
 - **SSH metrics**: CPU %, RAM %, Disk %, Uptime, Load Average, CPU Model
 - **History graphs** with Y/X-axis labels, stats (Avg/Min/Max), and value tooltips on hover
 - **Beautiful dark UI** — glassmorphism, responsive, modern
@@ -29,7 +29,9 @@ cd network-monitor
 docker compose up -d
 ```
 
-Open http://localhost:8765 — login with `admin` / `netmon2026`
+Copy `.env.example` to `.env`, set a strong `NETMON_PASS` and generate a secret
+with `openssl rand -hex 32`, then start the stack. The first admin account is
+created from those values.
 
 ### Option 2: Manual install
 
@@ -52,7 +54,7 @@ Open http://localhost:8765 — login with credentials from your `.env` file.
 
 All configuration is done via environment variables. You can either:
 
-- **Docker**: set them in `docker-compose.yml` (already configured with defaults)
+- **Docker**: set them in `.env` (the compose file loads it)
 - **Manual**: copy `.env.example` to `.env` and edit
 
 ### Environment Variables
@@ -60,7 +62,11 @@ All configuration is done via environment variables. You can either:
 | Variable | Default | Description |
 |---|---|---|
 | `NETMON_USER` | `admin` | Login username |
-| `NETMON_PASS` | `netmon2026` | Login password |
+| `NETMON_PASS` | — | Initial login password, minimum 12 characters |
+| `NETMON_SECRET` | — | At least 32 characters; encrypts stored SSH passwords and Proxmox tokens |
+| `NETMON_SECURE_COOKIES` | `false` | Set `true` when served over HTTPS |
+| `NETMON_SSH_KNOWN_HOSTS` | `/etc/netmon/known_hosts` | Curated SSH host-key file; unknown keys are rejected |
+| `DB_PATH` | `monitor.db` | SQLite database path |
 | `NETMON_PORT` | `8765` | Server listen port |
 | `CHECK_INTERVAL` | `20` | Seconds between monitoring checks |
 | `NETMON_SMTP_HOST` | — | SMTP server hostname |
@@ -100,6 +106,7 @@ NETMON_ALERT_EMAIL=recipient@email.com
 | **HTTPS** | HTTPS response status | URL |
 | **TCP** | TCP port open | Host + Port |
 | **SSH** | Full system metrics (CPU, RAM, Disk, Uptime, Load) | SSH access (key or password) |
+| **Proxmox VE** | Cluster nodes, node health, VMs, LXC, CPU, RAM, disk and load | Read-only Proxmox API token |
 
 ### SSH Monitoring
 
@@ -116,6 +123,18 @@ For SSH checks, you need SSH access to the target server.
 - Set **Password**
 
 SSH metrics collected: CPU %, CPU Model, RAM % (used/total), Disk % (used/total), Uptime, Load Average (1/5/15 min).
+
+### Proxmox VE Monitoring
+
+Create a read-only API token in Proxmox and enter the token value in the
+dashboard using the form `user@realm!tokenid=uuid`. Set the Proxmox API URL in
+the target field, for example `https://pve.example:8006`; if it is omitted,
+the monitor uses `https://<host>:8006`. TLS verification is enabled by default.
+Disable it only for a deliberately trusted lab endpoint with a self-signed
+certificate.
+
+The API token is encrypted in SQLite with `NETMON_SECRET` and is never
+returned by the server-list endpoint.
 
 ## API Documentation
 
@@ -139,7 +158,9 @@ Full Swagger/OpenAPI docs available at `/docs` when the server is running.
 | `GET` | `/api/check-auth` | Verify token |
 | `WS` | `/ws` | Real-time updates |
 
-All endpoints (except `/api/login`, `/api/health`, and `/docs`) require an `x-session` header with a valid token.
+All endpoints (except `/api/login`, `/api/health`, and `/docs`) require the
+HttpOnly session cookie set at login. The legacy `x-session` header remains
+accepted for API clients.
 
 ## Changing Password
 

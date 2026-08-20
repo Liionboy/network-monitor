@@ -11,8 +11,6 @@ COPY . .
 
 EXPOSE 8765
 
-ENV NETMON_USER=admin
-ENV NETMON_PASS=netmon2026
 ENV NETMON_PORT=8765
 
 CMD ["python3", "server.py"]
