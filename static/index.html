@@ -1,117 +1,151 @@
 <!DOCTYPE html>
-<html lang="ro">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
-  <meta http-equiv="Pragma" content="no-cache" />
-  <meta http-equiv="Expires" content="0" />
   <title>Network Monitor</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/style.css?v=1.7.0" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css?v=1.8.0" />
 </head>
 <body>
   <div class="app">
-    <header class="header">
-      <div class="logo">
-        <svg class="logo-icon" width="36" height="36" viewBox="0 0 32 32">
-          <rect x="1" y="1" width="30" height="30" rx="9" fill="rgba(255,255,255,.06)" stroke="rgba(56,189,248,.4)"/>
-          <circle cx="16" cy="16" r="4.5" fill="#38bdf8"/>
-          <circle cx="16" cy="16" r="9" fill="none" stroke="#38bdf8" stroke-width="1.3" opacity=".45"/>
-          <circle cx="16" cy="16" r="13" fill="none" stroke="#818cf8" stroke-width="1" opacity=".3"/>
-          <circle cx="8" cy="8" r="2.4" fill="#34d399"/>
-          <circle cx="24" cy="8" r="2.4" fill="#34d399"/>
-          <circle cx="24" cy="24" r="2.4" fill="#fb7185"/>
-          <circle cx="8" cy="24" r="2.4" fill="#34d399"/>
-          <line x1="8" y1="8" x2="16" y2="16" stroke="#38bdf8" stroke-width="1" opacity=".35"/>
-          <line x1="24" y1="8" x2="16" y2="16" stroke="#38bdf8" stroke-width="1" opacity=".35"/>
-          <line x1="24" y1="24" x2="16" y2="16" stroke="#38bdf8" stroke-width="1" opacity=".35"/>
-          <line x1="8" y1="24" x2="16" y2="16" stroke="#38bdf8" stroke-width="1" opacity=".35"/>
+    <aside class="sidebar">
+      <div class="brand">
+        <svg width="30" height="30" viewBox="0 0 32 32">
+          <rect x="1" y="1" width="30" height="30" rx="8" fill="rgba(79,140,255,.14)" stroke="rgba(79,140,255,.45)"/>
+          <circle cx="16" cy="16" r="4" fill="#4f8cff"/>
+          <circle cx="16" cy="16" r="8.5" fill="none" stroke="#4f8cff" stroke-width="1.2" opacity=".4"/>
+          <circle cx="8" cy="8" r="2.2" fill="#3ecf8e"/>
+          <circle cx="24" cy="8" r="2.2" fill="#3ecf8e"/>
+          <circle cx="24" cy="24" r="2.2" fill="#f0596c"/>
+          <circle cx="8" cy="24" r="2.2" fill="#3ecf8e"/>
         </svg>
-        <div class="logo-text">
+        <div>
           <h1>Network Monitor</h1>
-          <div class="logo-sub">Network Operations</div>
+          <div class="sub">Network Operations</div>
         </div>
       </div>
-      <div class="header-actions">
-        <nav class="nav-tabs">
-          <button class="nav-tab active" onclick="switchTab('dashboard')">Dashboard</button>
-          <button class="nav-tab" onclick="switchTab('alerts')">Alerts</button>
-          <button class="nav-tab" onclick="switchTab('maintenance')">Maintenance</button>
-          <button class="nav-tab" onclick="switchTab('users')">Users</button>
-        </nav>
-        <button class="primary-btn" onclick="openServerModal()">+ Add server</button>
-        <div class="connection-status" id="ws-status"><span class="dot"></span><span class="label">Connecting...</span></div>
-        <a href="javascript:logout()" class="logout-btn">Logout</a>
-      </div>
-    </header>
 
-    <!-- Dashboard Tab -->
-    <main class="layout" id="tab-dashboard">
-      <section class="panel">
-        <div class="panel-header">
-          <h2>Dashboard</h2>
-          <span id="last-update">--:--:--</span>
+      <nav class="side-nav">
+        <button class="nav-tab active" onclick="switchTab('dashboard')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          Dashboard
+        </button>
+        <button class="nav-tab" onclick="switchTab('servers')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><circle cx="7" cy="7" r=".8" fill="currentColor"/><circle cx="7" cy="17" r=".8" fill="currentColor"/></svg>
+          Servers
+        </button>
+        <button class="nav-tab" onclick="switchTab('alerts')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0-6 6v3l-2 4h16l-2-4V9a6 6 0 0 0-6-6z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+          Alerts
+        </button>
+        <button class="nav-tab" onclick="switchTab('maintenance')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          Maintenance
+        </button>
+        <button class="nav-tab" onclick="switchTab('users')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><circle cx="17.5" cy="9.5" r="2.5"/><path d="M16 20a5 5 0 0 1 6-4.8"/></svg>
+          Users
+        </button>
+      </nav>
+
+      <div class="side-footer">
+        <div class="connection-status" id="ws-status"><span class="dot"></span><span class="label">Connecting...</span></div>
+        <div class="side-meta">Updated <span id="last-update">--:--:--</span></div>
+        <a href="javascript:logout()" class="logout-btn">Sign out</a>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="page-title">Dashboard</h1>
+          <p class="page-sub" id="page-sub">Overview of your infrastructure</p>
         </div>
+        <button class="primary-btn" onclick="openServerModal()">Add server</button>
+      </header>
+
+      <!-- Dashboard -->
+      <main class="content" id="tab-dashboard">
         <div class="stats-row" id="stats-row"></div>
         <div class="servers-grid" id="servers-grid"></div>
-      </section>
-      <aside class="panel side-panel">
-        <div class="panel-header"><h2>Servers</h2></div>
-        <div id="server-list"></div>
-      </aside>
-    </main>
+      </main>
 
-    <!-- Alerts Tab -->
-    <main class="layout hidden" id="tab-alerts">
-      <section class="panel" style="grid-column:1/-1">
-        <div class="panel-header"><h2>Alert Rules</h2></div>
-        <div id="alert-rules-list"></div>
-        <div class="empty" style="margin-top:12px">Configure alerts per server using the ⚡ Alerts button on each server card.</div>
-      </section>
-      <section class="panel" style="grid-column:1/-1">
-        <div class="panel-header"><h2>Alert History</h2></div>
-        <div id="alert-log-list"></div>
-      </section>
-    </main>
+      <!-- Servers -->
+      <main class="content hidden" id="tab-servers">
+        <section class="panel">
+          <div class="panel-header"><h2>Monitored endpoints</h2></div>
+          <div id="server-list"></div>
+        </section>
+      </main>
 
-    <!-- Maintenance Tab -->
-    <main class="layout hidden" id="tab-maintenance">
-      <section class="panel" style="grid-column:1/-1;max-width:700px">
-        <div class="panel-header"><h2>🔇 Maintenance Windows</h2>
-          <button class="primary-btn" onclick="openMaintenanceModal()">+ Add Window</button>
+      <!-- Alerts -->
+      <main class="content hidden" id="tab-alerts">
+        <section class="panel">
+          <div class="panel-header"><h2>Alert rules</h2></div>
+          <div id="alert-rules-list"></div>
+          <div class="empty" style="margin-top:12px">Configure thresholds per server using the Alerts button on a server card.</div>
+        </section>
+        <section class="panel">
+          <div class="panel-header"><h2>Recent events</h2></div>
+          <div id="alert-log-list"></div>
+        </section>
+      </main>
+
+      <!-- Maintenance -->
+      <main class="content hidden" id="tab-maintenance">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Maintenance windows</h2>
+            <button class="primary-btn" onclick="openMaintenanceModal()">Add window</button>
+          </div>
+          <p class="alert-desc">During a maintenance window, alerts are suppressed for the selected server.</p>
+          <div id="maintenance-list"></div>
+        </section>
+      </main>
+
+      <!-- Users -->
+      <main class="content hidden" id="tab-users">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Users</h2>
+            <button class="primary-btn" onclick="openUserModal()">Add user</button>
+          </div>
+          <div id="users-list"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Confirm Modal -->
+  <div class="modal-overlay" id="confirm-modal-overlay">
+    <div class="modal confirm-modal">
+      <div class="modal-header"><h2>Confirm</h2></div>
+      <div class="modal-body">
+        <p id="confirm-message"></p>
+        <div class="form-actions">
+          <button type="button" class="secondary-btn" id="confirm-no">Cancel</button>
+          <button type="button" class="danger-btn" id="confirm-yes">Delete</button>
         </div>
-        <p class="alert-desc" style="margin-bottom:12px">During maintenance windows, alerts are suppressed for the selected server.</p>
-        <div id="maintenance-list"></div>
-      </section>
-    </main>
-
-    <!-- Users Tab -->
-    <main class="layout hidden" id="tab-users">
-      <section class="panel" style="grid-column:1/-1;max-width:600px">
-        <div class="panel-header"><h2>Users</h2>
-          <button class="primary-btn" onclick="openUserModal()">+ Add user</button>
-        </div>
-        <div id="users-list"></div>
-      </section>
-    </main>
+      </div>
+    </div>
   </div>
 
   <!-- Change Password Modal -->
   <div class="modal-overlay" id="password-modal-overlay">
     <div class="modal form-modal">
       <div class="modal-header">
-        <h2>Change Password</h2>
+        <h2>Change password</h2>
         <button class="modal-close" onclick="closePasswordModal()">&times;</button>
       </div>
       <form class="modal-body form-grid" id="password-form">
         <input type="hidden" id="pw-user-id" />
         <input type="hidden" id="pw-username" />
         <label><span>User</span><input id="pw-user-display" disabled /></label>
-        <label><span>New Password</span><input id="pw-new-password" type="password" required minlength="4" /></label>
+        <label><span>New password</span><input id="pw-new-password" type="password" required minlength="4" /></label>
         <div class="form-actions">
           <button type="submit" class="primary-btn">Update</button>
           <button type="button" class="secondary-btn" onclick="closePasswordModal()">Cancel</button>
@@ -147,19 +181,19 @@
         <label id="target-wrap" class="hidden"><span>Custom URL</span><input id="f-target" placeholder="https://example.com/health" /></label>
         <label id="port-wrap" class="hidden"><span>Port</span><input id="f-port" type="number" min="1" max="65535" /></label>
         <div id="ssh-fields" class="hidden">
-          <div class="section-title">SSH Authentication</div>
-          <label><span>SSH User</span><input id="f-ssh-user" placeholder="root" /></label>
-          <label><span>Private Key Path</span><input id="f-ssh-key" placeholder="~/.ssh/id_rsa" /></label>
+          <div class="section-title">SSH authentication</div>
+          <label><span>SSH user</span><input id="f-ssh-user" placeholder="root" /></label>
+          <label><span>Private key path</span><input id="f-ssh-key" placeholder="~/.ssh/id_rsa" /></label>
           <label><span>Password (if no key)</span><input id="f-ssh-password" type="password" placeholder="Optional" /></label>
         </div>
         <div id="health-fields" class="hidden">
-          <div class="section-title">Health Check</div>
-          <label><span>Health Path</span><input id="f-health-path" placeholder="/api/health" /></label>
-          <label><span>Expected Status Code</span><input id="f-expected-status" type="number" min="100" max="599" placeholder="200" /></label>
+          <div class="section-title">Health check</div>
+          <label><span>Health path</span><input id="f-health-path" placeholder="/api/health" /></label>
+          <label><span>Expected status code</span><input id="f-expected-status" type="number" min="100" max="599" placeholder="200" /></label>
         </div>
         <div id="proxmox-fields" class="hidden">
           <div class="section-title">Proxmox API</div>
-          <label><span>API Token</span><input id="f-proxmox-token" type="password" autocomplete="new-password" placeholder="user@pam!monitor=uuid (blank keeps current)" /></label>
+          <label><span>API token</span><input id="f-proxmox-token" type="password" autocomplete="new-password" placeholder="user@pam!monitor=uuid (blank keeps current)" /></label>
           <label class="checkbox-row"><input id="f-proxmox-verify-tls" type="checkbox" checked /> <span>Verify TLS certificate</span></label>
         </div>
         <label class="checkbox-row"><input id="f-enabled" type="checkbox" checked /> <span>Enabled</span></label>
@@ -175,12 +209,12 @@
   <div class="modal-overlay" id="alert-modal-overlay">
     <div class="modal form-modal">
       <div class="modal-header">
-        <h2 id="server-alerts-title">⚡ Server Alerts</h2>
+        <h2 id="server-alerts-title">Alert rules</h2>
         <button class="modal-close" onclick="closeAlertModal()">&times;</button>
       </div>
       <form class="modal-body form-grid" id="alert-form">
         <input type="hidden" id="a-server-id" />
-        <p class="alert-desc">Enable alerts for each metric. You'll receive an email when a value exceeds the threshold.</p>
+        <p class="alert-desc">Enable alerts per metric. You will receive an email when a value exceeds the threshold.</p>
         <div class="alert-row">
           <label class="checkbox-row"><input type="checkbox" id="a-cpu-enabled" /> <span>CPU</span></label>
           <div class="alert-threshold"><span>above</span><input id="a-cpu-threshold" type="number" step="1" min="1" max="100" placeholder="80" /><span>%</span></div>
@@ -194,11 +228,11 @@
           <div class="alert-threshold"><span>above</span><input id="a-disk-threshold" type="number" step="1" min="1" max="100" placeholder="90" /><span>%</span></div>
         </div>
         <div class="alert-row">
-          <label class="checkbox-row"><input type="checkbox" id="a-response-enabled" /> <span>Response Time</span></label>
+          <label class="checkbox-row"><input type="checkbox" id="a-response-enabled" /> <span>Response time</span></label>
           <div class="alert-threshold"><span>above</span><input id="a-response-threshold" type="number" step="1" min="1" placeholder="1000" /><span>ms</span></div>
         </div>
         <div class="form-actions">
-          <button type="submit" class="primary-btn">Save Alerts</button>
+          <button type="submit" class="primary-btn">Save rules</button>
           <button type="button" class="secondary-btn" onclick="closeAlertModal()">Cancel</button>
         </div>
       </form>
@@ -244,16 +278,16 @@
   <div class="modal-overlay" id="maintenance-modal-overlay">
     <div class="modal form-modal">
       <div class="modal-header">
-        <h2>Add Maintenance Window</h2>
+        <h2>Add maintenance window</h2>
         <button class="modal-close" onclick="closeMaintenanceModal()">&times;</button>
       </div>
       <form class="modal-body form-grid" id="maintenance-form">
         <label><span>Server *</span><select id="mw-server-id"></select></label>
-        <label><span>Start Hour</span><input id="mw-start-hour" type="number" min="0" max="23" value="23" required /></label>
-        <label><span>Start Minute</span><input id="mw-start-minute" type="number" min="0" max="59" value="0" required /></label>
-        <label><span>End Hour</span><input id="mw-end-hour" type="number" min="0" max="23" value="6" required /></label>
-        <label><span>End Minute</span><input id="mw-end-minute" type="number" min="0" max="59" value="0" required /></label>
-        <label><span>Days of Week</span><input id="mw-days" value="0,1,2,3,4,5,6" placeholder="0=Mon,6=Sun" /><small>Comma-separated: 0=Mon ... 6=Sun</small></label>
+        <label><span>Start hour</span><input id="mw-start-hour" type="number" min="0" max="23" value="23" required /></label>
+        <label><span>Start minute</span><input id="mw-start-minute" type="number" min="0" max="59" value="0" required /></label>
+        <label><span>End hour</span><input id="mw-end-hour" type="number" min="0" max="23" value="6" required /></label>
+        <label><span>End minute</span><input id="mw-end-minute" type="number" min="0" max="59" value="0" required /></label>
+        <label><span>Days of week</span><input id="mw-days" value="0,1,2,3,4,5,6" placeholder="0=Mon,6=Sun" /><small>Comma-separated: 0=Mon ... 6=Sun</small></label>
         <div class="form-actions">
           <button type="submit" class="primary-btn">Save</button>
           <button type="button" class="secondary-btn" onclick="closeMaintenanceModal()">Cancel</button>
@@ -262,20 +296,6 @@
     </div>
   </div>
 
-  <!-- Confirm Modal -->
-  <div class="modal-overlay" id="confirm-modal-overlay">
-    <div class="modal confirm-modal">
-      <div class="modal-header"><h2>Confirm</h2></div>
-      <div class="modal-body">
-        <p id="confirm-message"></p>
-        <div class="form-actions">
-          <button type="button" class="secondary-btn" id="confirm-no">Cancel</button>
-          <button type="button" class="danger-btn" id="confirm-yes">Delete</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script src="/static/js/app.js?v=1.7.0"></script>
+  <script src="/static/js/app.js?v=1.8.0"></script>
 </body>
 </html>

@@ -78,11 +78,28 @@ function showConfirm(message) {
 
 // ─── Tabs ──────────────────────────────────────────────────────────
 
+const PAGE_INFO = {
+    dashboard: ['Dashboard', 'Overview of your infrastructure'],
+    servers: ['Servers', 'Manage monitored endpoints'],
+    alerts: ['Alerts', 'Threshold rules and recent events'],
+    maintenance: ['Maintenance', 'Scheduled alert suppression'],
+    users: ['Users', 'Accounts and access'],
+};
+
 function switchTab(tab) {
     document.querySelectorAll('[id^="tab-"]').forEach(el => el.classList.add('hidden'));
     document.getElementById('tab-' + tab).classList.remove('hidden');
     document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
-    event.target.classList.add('active');
+    const ev = (typeof event !== 'undefined' && event) ? event : null;
+    if (ev && ev.currentTarget) ev.currentTarget.classList.add('active');
+    else { const first = document.querySelector('.nav-tab'); if (first && tab === 'dashboard') first.classList.add('active'); }
+    const info = PAGE_INFO[tab];
+    if (info) {
+        const t = document.getElementById('page-title');
+        const s = document.getElementById('page-sub');
+        if (t) t.textContent = info[0];
+        if (s) s.textContent = info[1];
+    }
     if (tab === 'alerts') { loadAlertRules(); loadAlertLog(); }
     if (tab === 'users') loadUsers();
     if (tab === 'maintenance') loadMaintenanceWindows();
@@ -149,10 +166,13 @@ function fmtBandwidth(bps) {
 function renderDashboard() {
     const servers = currentStatus.servers || [];
     const online = servers.filter(s => s.online).length;
+    const withLatency = servers.filter(s => s.response_ms);
+    const avgLatency = withLatency.length ? Math.round(withLatency.reduce((a, s) => a + s.response_ms, 0) / withLatency.length) : null;
     document.getElementById('stats-row').innerHTML =
         '<div class="mini-stat"><strong>'+servers.length+'</strong><span>Total</span></div>'+
         '<div class="mini-stat"><strong>'+online+'</strong><span>Online</span></div>'+
-        '<div class="mini-stat"><strong>'+(servers.length-online)+'</strong><span>Offline</span></div>';
+        '<div class="mini-stat"><strong>'+(servers.length-online)+'</strong><span>Offline</span></div>'+
+        '<div class="mini-stat"><strong>'+(avgLatency!=null?avgLatency+' ms':'-')+'</strong><span>Avg latency</span></div>';
     document.getElementById('last-update').textContent = currentStatus.timestamp_iso
         ? new Date(currentStatus.timestamp_iso).toLocaleTimeString('ro-RO') : '--:--:--';
 
@@ -163,9 +183,9 @@ function renderDashboard() {
         let m = '';
         if (s.check_type === 'ssh' && s.online) {
             m = '<div class="metrics-row">'+
-                '<div class="metric"><span class="metric-label">CPU</span><span class="metric-value">'+(s.cpu!=null?s.cpu.toFixed(1)+'%':'-')+'</span></div>'+
-                '<div class="metric"><span class="metric-label">RAM</span><span class="metric-value">'+(s.ram_percent!=null?s.ram_percent.toFixed(1)+'%':'-')+'</span></div>'+
-                '<div class="metric"><span class="metric-label">Disk</span><span class="metric-value">'+(s.disk_percent!=null?s.disk_percent.toFixed(1)+'%':'-')+'</span></div></div>'+
+                '<div class="metric"><span class="metric-label">CPU</span><span class="metric-value">'+(s.cpu!=null?s.cpu.toFixed(1)+'%':'-')+'</span><div class="metric-bar"><i style="width:'+Math.min(100,s.cpu||0)+'%"></i></div></div>'+
+                '<div class="metric"><span class="metric-label">Memory</span><span class="metric-value">'+(s.ram_percent!=null?s.ram_percent.toFixed(1)+'%':'-')+'</span><div class="metric-bar"><i style="width:'+Math.min(100,s.ram_percent||0)+'%"></i></div></div>'+
+                '<div class="metric"><span class="metric-label">Disk</span><span class="metric-value">'+(s.disk_percent!=null?s.disk_percent.toFixed(1)+'%':'-')+'</span><div class="metric-bar"><i style="width:'+Math.min(100,s.disk_percent||0)+'%"></i></div></div></div>'+
                 '<div class="info-row"><span>Uptime: <b>'+fmtUptime(s.uptime)+'</b></span><span>Load: <b>'+(s.load_1||'-')+' / '+(s.load_5||'-')+' / '+(s.load_15||'-')+'</b></span></div>'+
                 '<div class="info-row"><span>RAM: <b>'+fmtBytes(s.ram_used)+' / '+fmtBytes(s.ram_total)+'</b></span><span>Disk: <b>'+fmtBytes(s.disk_used)+' / '+fmtBytes(s.disk_total)+'</b></span></div>';
             if (s.bandwidth_rx || s.bandwidth_tx) {
@@ -203,18 +223,23 @@ function renderDashboard() {
             m+'<div class="detail-row"><span>Check</span><span>'+esc(s.check_type.toUpperCase())+'</span></div>'+
             '<div class="detail-row"><span>Latency</span><span>'+(s.response_ms?s.response_ms+' ms':'—')+'</span></div>'+
             '<div class="detail-row"><span>Detail</span><span>'+esc(s.detail||'-')+'</span></div>'+
-            '<div class="card-footer"><button class="icon-btn" onclick="openHistory('+s.id+')">📊 History</button> <button class="icon-btn" onclick="openServerAlerts('+s.id+')">⚡ Alerts</button></div></div>';
+            '<div class="card-footer"><button class="icon-btn" onclick="openHistory('+s.id+')">History</button><button class="icon-btn" onclick="openServerAlerts('+s.id+')">Alerts</button></div></div>';
     }).join('');
 }
 
 function renderServerList() {
     const el = document.getElementById('server-list');
-    if (!serversCache.length) { el.innerHTML = '<div class="empty">No servers.</div>'; return; }
-    el.innerHTML = serversCache.map(s =>
-        '<div class="list-item"><div><div class="list-title">'+esc(s.name)+'</div><div class="list-sub">'+esc(s.host)+' · '+esc(s.check_type.toUpperCase())+'</div></div>'+
-        '<div class="list-actions"><button class="icon-btn" onclick="editServer('+s.id+')">Edit</button>'+
-        '<button class="icon-btn danger" onclick="deleteServer('+s.id+')">Del</button></div></div>'
-    ).join('');
+    if (!serversCache.length) { el.innerHTML = '<div class="empty">No servers yet. Add your first monitored endpoint.</div>'; return; }
+    el.innerHTML = '<table class="detail-table"><thead><tr><th>Name</th><th>Host</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody>'+
+        serversCache.map(s =>
+            '<tr><td class="td-strong">'+esc(s.name)+'</td>'+
+            '<td class="td-mono">'+esc(s.host)+'</td>'+
+            '<td><span class="chip">'+esc(s.check_type.toUpperCase())+'</span></td>'+
+            '<td><span class="status-dot'+(s.enabled?' on':'')+'"></span>'+(s.enabled?'Active':'Disabled')+'</td>'+
+            '<td class="td-actions"><button class="icon-btn" onclick="editServer('+s.id+')">Edit</button> '+
+            '<button class="icon-btn danger" onclick="deleteServer('+s.id+')">Delete</button></td></tr>'
+        ).join('')+
+        '</tbody></table>';
 }
 
 // ─── Server Modal ──────────────────────────────────────────────────
@@ -383,7 +408,7 @@ async function openServerAlerts(sid) {
     const srv = serversCache.find(x => x.id === sid);
     const name = srv ? srv.name : ('Server ' + sid);
     document.getElementById('a-server-id').value = sid;
-    document.getElementById('server-alerts-title').textContent = '⚡ ' + name + ' — Alerts';
+    document.getElementById('server-alerts-title').textContent = name + ' — Alert rules';
     ['a-cpu-enabled','a-ram-enabled','a-disk-enabled','a-response-enabled'].forEach(id => document.getElementById(id).checked = false);
     document.getElementById('a-cpu-threshold').value = METRIC_DEFAULTS.cpu;
     document.getElementById('a-ram-threshold').value = METRIC_DEFAULTS.ram;
@@ -423,9 +448,9 @@ async function loadAlertRules() {
     if (!res) return;
     const rules = await res.json();
     const el = document.getElementById('alert-rules-list');
-    if (!rules.length) { el.innerHTML = '<div class="empty">No alert rules. Click ⚡ Alerts on a server card to configure.</div>'; return; }
+    if (!rules.length) { el.innerHTML = '<div class="empty">No alert rules yet. Configure them from a server card.</div>'; return; }
     el.innerHTML = '<table class="detail-table"><thead><tr><th>Server</th><th>Metric</th><th>Threshold</th><th></th></tr></thead><tbody>'+
-        rules.map(r => '<tr><td>'+esc(r.server_name)+'</td><td>'+esc(r.metric)+'</td><td>'+r.threshold+'</td><td><button class="icon-btn danger" onclick="deleteAlertRule('+r.id+')">Del</button></td></tr>').join('')+
+        rules.map(r => '<tr><td>'+esc(r.server_name)+'</td><td>'+esc(r.metric)+'</td><td>'+r.threshold+'</td><td><button class="icon-btn danger" onclick="deleteAlertRule('+r.id+')">Delete</button></td></tr>').join('')+
         '</tbody></table>';
 }
 
@@ -458,7 +483,7 @@ async function loadMaintenanceWindows() {
     el.innerHTML = '<table class="detail-table"><thead><tr><th>Server</th><th>From</th><th>To</th><th>Days</th><th></th></tr></thead><tbody>'+
         windows.map(w => {
             const days = w.days_of_week.split(',').map(d => dayNames[parseInt(d)]).join(', ');
-            return '<tr><td>'+esc(w.server_name)+'</td><td>'+String(w.start_hour).padStart(2,'0')+':'+String(w.start_minute).padStart(2,'0')+'</td><td>'+String(w.end_hour).padStart(2,'0')+':'+String(w.end_minute).padStart(2,'0')+'</td><td>'+days+'</td><td><button class="icon-btn danger" onclick="deleteMaintenanceWindow('+w.id+')">Del</button></td></tr>';
+            return '<tr><td>'+esc(w.server_name)+'</td><td>'+String(w.start_hour).padStart(2,'0')+':'+String(w.start_minute).padStart(2,'0')+'</td><td>'+String(w.end_hour).padStart(2,'0')+':'+String(w.end_minute).padStart(2,'0')+'</td><td>'+days+'</td><td><button class="icon-btn danger" onclick="deleteMaintenanceWindow('+w.id+')">Delete</button></td></tr>';
         }).join('')+
         '</tbody></table>';
 }
@@ -521,8 +546,8 @@ async function loadUsers() {
     const el = document.getElementById('users-list');
     el.innerHTML = '<table class="detail-table"><thead><tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr></thead><tbody>'+
         users.map(u => '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.role)+'</td><td>'+fmtTime(u.created_at)+'</td><td>'+
-        '<button class="icon-btn" onclick="openPasswordModal('+u.id+')">🔑 Password</button> '+
-        (u.username==='admin'?'':'<button class="icon-btn danger" onclick="deleteUser('+u.id+')">Del</button>')+
+        '<button class="icon-btn" onclick="openPasswordModal('+u.id+')">Password</button> '+
+        (u.username==='admin'?'':'<button class="icon-btn danger" onclick="deleteUser('+u.id+')">Delete</button>')+
         '</td></tr>').join('')+
         '</tbody></table>';
 }
