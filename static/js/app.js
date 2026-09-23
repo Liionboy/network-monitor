@@ -15,6 +15,67 @@ async function apiFetch(url, opts = {}) {
     return res;
 }
 
+// ─── Modal stack + toasts ──────────────────────────────────────
+
+const modalStack = [];
+let modalZTop = 100;
+
+function openModal(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!modalStack.includes(id)) modalStack.push(id);
+    modalZTop += 10;
+    el.style.zIndex = String(modalZTop);
+    el.classList.add('active');
+}
+
+function closeModal(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('active');
+    const i = modalStack.indexOf(id);
+    if (i !== -1) modalStack.splice(i, 1);
+}
+
+function closeTopModal() {
+    if (modalStack.length) closeModal(modalStack[modalStack.length - 1]);
+}
+
+function showToast(message, type = 'error') {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        document.body.appendChild(container);
+    }
+    const t = document.createElement('div');
+    t.className = 'toast ' + type;
+    t.textContent = message;
+    container.appendChild(t);
+    setTimeout(() => { t.classList.add('toast-out'); setTimeout(() => t.remove(), 300); }, 3500);
+}
+
+function showConfirm(message) {
+    return new Promise((resolve) => {
+        const overlay = document.getElementById('confirm-modal-overlay');
+        document.getElementById('confirm-message').textContent = message;
+        let settled = false;
+        const done = (val) => {
+            if (settled) return;
+            settled = true;
+            closeModal('confirm-modal-overlay');
+            document.removeEventListener('keydown', onKey);
+            resolve(val);
+        };
+        const onKey = (e) => { if (e.key === 'Escape') done(false); };
+        document.getElementById('confirm-yes').onclick = () => done(true);
+        document.getElementById('confirm-no').onclick = () => done(false);
+        overlay.onclick = (e) => { if (e.target === overlay) done(false); };
+        document.addEventListener('keydown', onKey);
+        openModal('confirm-modal-overlay');
+    });
+}
+
 // ─── Tabs ──────────────────────────────────────────────────────────
 
 function switchTab(tab) {
@@ -142,7 +203,7 @@ function renderDashboard() {
             m+'<div class="detail-row"><span>Check</span><span>'+esc(s.check_type.toUpperCase())+'</span></div>'+
             '<div class="detail-row"><span>Latency</span><span>'+(s.response_ms?s.response_ms+' ms':'—')+'</span></div>'+
             '<div class="detail-row"><span>Detail</span><span>'+esc(s.detail||'-')+'</span></div>'+
-            '<div class="card-footer"><button class="icon-btn" onclick="openHistory('+s.id+',\''+esc(s.name)+'\')">📊 History</button> <button class="icon-btn" onclick="openServerAlerts('+s.id+',\''+esc(s.name)+'\')">⚡ Alerts</button></div></div>';
+            '<div class="card-footer"><button class="icon-btn" onclick="openHistory('+s.id+')">📊 History</button> <button class="icon-btn" onclick="openServerAlerts('+s.id+')">⚡ Alerts</button></div></div>';
     }).join('');
 }
 
@@ -151,8 +212,8 @@ function renderServerList() {
     if (!serversCache.length) { el.innerHTML = '<div class="empty">No servers.</div>'; return; }
     el.innerHTML = serversCache.map(s =>
         '<div class="list-item"><div><div class="list-title">'+esc(s.name)+'</div><div class="list-sub">'+esc(s.host)+' · '+esc(s.check_type.toUpperCase())+'</div></div>'+
-        '<div class="list-actions"><button class="icon-btn" onclick=\''+'editServer('+JSON.stringify(s).replace(/'/g,"\\'")+')'+"'>Edit</button>"+
-        '<button class="icon-btn danger" onclick="deleteServer('+s.id+",'"+esc(s.name)+"')\">Del</button></div></div>"
+        '<div class="list-actions"><button class="icon-btn" onclick="editServer('+s.id+')">Edit</button>'+
+        '<button class="icon-btn danger" onclick="deleteServer('+s.id+')">Del</button></div></div>'
     ).join('');
 }
 
@@ -164,11 +225,13 @@ function openServerModal() {
     document.getElementById('server-id').value = '';
     document.getElementById('f-enabled').checked = true;
     toggleCheckFields();
-    document.getElementById('server-modal-overlay').classList.add('active');
+    openModal('server-modal-overlay');
 }
-function closeServerModal() { document.getElementById('server-modal-overlay').classList.remove('active'); }
+function closeServerModal() { closeModal('server-modal-overlay'); }
 
-function editServer(s) {
+function editServer(idOrObj) {
+    const s = (idOrObj && typeof idOrObj === 'object') ? idOrObj : serversCache.find(x => x.id === idOrObj);
+    if (!s) return;
     document.getElementById('server-modal-title').textContent = 'Edit server';
     document.getElementById('server-id').value = s.id;
     document.getElementById('f-name').value = s.name;
@@ -185,7 +248,7 @@ function editServer(s) {
     document.getElementById('f-proxmox-verify-tls').checked = s.proxmox_verify_tls !== false && s.proxmox_verify_tls !== 0;
     document.getElementById('f-enabled').checked = !!s.enabled;
     toggleCheckFields();
-    document.getElementById('server-modal-overlay').classList.add('active');
+    openModal('server-modal-overlay');
 }
 
 function toggleCheckFields() {
@@ -221,22 +284,25 @@ document.getElementById('server-form').addEventListener('submit', async (e) => {
     };
     const url = id ? '/api/servers/' + id : '/api/servers';
     const res = await apiFetch(url, { method: id ? 'PUT' : 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-    if (!res || !res.ok) { alert('Error saving server.'); return; }
+    if (!res || !res.ok) { showToast('Error saving server.'); return; }
     closeServerModal(); await loadServers();
 });
 
-async function deleteServer(id, name) {
-    if (!confirm('Delete "' + name + '"?')) return;
+async function deleteServer(id) {
+    const s = serversCache.find(x => x.id === id);
+    if (!await showConfirm('Delete "' + (s ? s.name : 'server ' + id) + '"?')) return;
     const res = await apiFetch('/api/servers/' + id, { method: 'DELETE' });
-    if (!res || !res.ok) return alert('Error.');
+    if (!res || !res.ok) return showToast('Error.');
     await loadServers();
 }
 
 // ─── History ───────────────────────────────────────────────────────
 
-async function openHistory(sid, name) {
+async function openHistory(sid) {
+    const srv = serversCache.find(x => x.id === sid);
+    const name = srv ? srv.name : ('Server ' + sid);
     document.getElementById('history-modal-title').textContent = name + ' — History';
-    document.getElementById('history-modal-overlay').classList.add('active');
+    openModal('history-modal-overlay');
     document.getElementById('history-body').innerHTML = '<div class="empty">Loading...</div>';
     const res = await apiFetch('/api/history/' + sid + '?hours=6');
     if (!res) return;
@@ -307,13 +373,15 @@ function showChartTip(el) {
 function moveChartTip(e) { if (chartTipEl) { chartTipEl.style.left = (e.clientX + 14) + 'px'; chartTipEl.style.top = (e.clientY - 30) + 'px'; } }
 function hideChartTip() { if (chartTipEl) chartTipEl.style.display = 'none'; }
 
-function closeHistoryModal() { document.getElementById('history-modal-overlay').classList.remove('active'); }
+function closeHistoryModal() { closeModal('history-modal-overlay'); }
 
 // ─── Alerts ────────────────────────────────────────────────────────
 
 const METRIC_DEFAULTS = { cpu: 80, ram: 85, disk: 90, response_ms: 1000 };
 
-async function openServerAlerts(sid, name) {
+async function openServerAlerts(sid) {
+    const srv = serversCache.find(x => x.id === sid);
+    const name = srv ? srv.name : ('Server ' + sid);
     document.getElementById('a-server-id').value = sid;
     document.getElementById('server-alerts-title').textContent = '⚡ ' + name + ' — Alerts';
     ['a-cpu-enabled','a-ram-enabled','a-disk-enabled','a-response-enabled'].forEach(id => document.getElementById(id).checked = false);
@@ -332,9 +400,9 @@ async function openServerAlerts(sid, name) {
             else if (metric === 'response_ms') { document.getElementById('a-response-enabled').checked = true; document.getElementById('a-response-threshold').value = r.threshold; }
         });
     }
-    document.getElementById('alert-modal-overlay').classList.add('active');
+    openModal('alert-modal-overlay');
 }
-function closeAlertModal() { document.getElementById('alert-modal-overlay').classList.remove('active'); }
+function closeAlertModal() { closeModal('alert-modal-overlay'); }
 
 document.getElementById('alert-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -345,7 +413,7 @@ document.getElementById('alert-form').addEventListener('submit', async (e) => {
     if (document.getElementById('a-disk-enabled').checked) alerts.push({ metric: 'disk', threshold: Number(document.getElementById('a-disk-threshold').value), enabled: true });
     if (document.getElementById('a-response-enabled').checked) alerts.push({ metric: 'response_ms', threshold: Number(document.getElementById('a-response-threshold').value), enabled: true });
     const res = await apiFetch('/api/servers/' + sid + '/alerts', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ alerts }) });
-    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return alert(err.detail || 'Error.'); }
+    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return showToast(err.detail || 'Error.'); }
     closeAlertModal();
     if (typeof loadAlertRules === 'function') loadAlertRules();
 });
@@ -374,7 +442,7 @@ async function loadAlertLog() {
 
 async function deleteAlertRule(id) {
     const res = await apiFetch('/api/alert-rules/' + id, { method: 'DELETE' });
-    if (!res || !res.ok) return alert('Error.');
+    if (!res || !res.ok) return showToast('Error.');
     loadAlertRules();
 }
 
@@ -400,9 +468,9 @@ function openMaintenanceModal() {
     // Populate server dropdown
     const sel = document.getElementById('mw-server-id');
     sel.innerHTML = serversCache.map(s => '<option value="'+s.id+'">'+esc(s.name)+'</option>').join('');
-    document.getElementById('maintenance-modal-overlay').classList.add('active');
+    openModal('maintenance-modal-overlay');
 }
-function closeMaintenanceModal() { document.getElementById('maintenance-modal-overlay').classList.remove('active'); }
+function closeMaintenanceModal() { closeModal('maintenance-modal-overlay'); }
 
 document.getElementById('maintenance-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -416,39 +484,44 @@ document.getElementById('maintenance-form').addEventListener('submit', async (e)
         enabled: true,
     };
     const res = await apiFetch('/api/maintenance-windows', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return alert(err.detail || 'Error.'); }
+    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return showToast(err.detail || 'Error.'); }
     closeMaintenanceModal(); loadMaintenanceWindows();
 });
 
 async function deleteMaintenanceWindow(id) {
-    if (!confirm('Delete this maintenance window?')) return;
+    if (!await showConfirm('Delete this maintenance window?')) return;
     const res = await apiFetch('/api/maintenance-windows/' + id, { method: 'DELETE' });
-    if (!res || !res.ok) return alert('Error.');
+    if (!res || !res.ok) return showToast('Error.');
     loadMaintenanceWindows();
 }
 
 // ─── Users ─────────────────────────────────────────────────────────
 
-function openUserModal() { document.getElementById('user-form').reset(); document.getElementById('user-modal-overlay').classList.add('active'); }
-function closeUserModal() { document.getElementById('user-modal-overlay').classList.remove('active'); }
+let usersCache = [];
 
-function openPasswordModal(uid, username) {
+function openUserModal() { document.getElementById('user-form').reset(); openModal('user-modal-overlay'); }
+function closeUserModal() { closeModal('user-modal-overlay'); }
+
+function openPasswordModal(uid) {
+    const u = usersCache.find(x => x.id === uid);
+    if (!u) return;
     document.getElementById('pw-user-id').value = uid;
-    document.getElementById('pw-username').value = username;
-    document.getElementById('pw-user-display').value = username;
+    document.getElementById('pw-username').value = u.username;
+    document.getElementById('pw-user-display').value = u.username;
     document.getElementById('pw-new-password').value = '';
-    document.getElementById('password-modal-overlay').classList.add('active');
+    openModal('password-modal-overlay');
 }
-function closePasswordModal() { document.getElementById('password-modal-overlay').classList.remove('active'); }
+function closePasswordModal() { closeModal('password-modal-overlay'); }
 
 async function loadUsers() {
     const res = await apiFetch('/api/users');
     if (!res) { document.getElementById('users-list').innerHTML = '<div class="empty">Admin access required.</div>'; return; }
     const users = await res.json();
+    usersCache = users;
     const el = document.getElementById('users-list');
     el.innerHTML = '<table class="detail-table"><thead><tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr></thead><tbody>'+
         users.map(u => '<tr><td>'+esc(u.username)+'</td><td>'+esc(u.role)+'</td><td>'+fmtTime(u.created_at)+'</td><td>'+
-        '<button class="icon-btn" onclick="openPasswordModal('+u.id+',\''+esc(u.username)+'\')">🔑 Password</button> '+
+        '<button class="icon-btn" onclick="openPasswordModal('+u.id+')">🔑 Password</button> '+
         (u.username==='admin'?'':'<button class="icon-btn danger" onclick="deleteUser('+u.id+')">Del</button>')+
         '</td></tr>').join('')+
         '</tbody></table>';
@@ -462,14 +535,14 @@ document.getElementById('user-form').addEventListener('submit', async (e) => {
         role: document.getElementById('u-role').value,
     };
     const res = await apiFetch('/api/users', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return alert(err.detail || 'Error.'); }
+    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return showToast(err.detail || 'Error.'); }
     closeUserModal(); loadUsers();
 });
 
 async function deleteUser(id) {
-    if (!confirm('Delete this user?')) return;
+    if (!await showConfirm('Delete this user?')) return;
     const res = await apiFetch('/api/users/' + id, { method: 'DELETE' });
-    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return alert(err.detail || 'Error.'); }
+    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return showToast(err.detail || 'Error.'); }
     loadUsers();
 }
 
@@ -478,9 +551,9 @@ document.getElementById('password-form').addEventListener('submit', async (e) =>
     const uid = document.getElementById('pw-user-id').value;
     const password = document.getElementById('pw-new-password').value;
     const res = await apiFetch('/api/users/' + uid + '/password', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ password }) });
-    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return alert(err.detail || 'Error.'); }
+    if (!res || !res.ok) { const err = await res?.json().catch(()=>({})); return showToast(err.detail || 'Error.'); }
     closePasswordModal();
-    alert('Password updated!');
+    showToast('Password updated!', 'success');
 });
 
 // ─── Init ──────────────────────────────────────────────────────────
@@ -492,6 +565,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectWs();
     ['server-modal-overlay','alert-modal-overlay','user-modal-overlay','history-modal-overlay','password-modal-overlay','maintenance-modal-overlay'].forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.addEventListener('click', (e) => { if (e.target.id === id) e.target.classList.remove('active'); });
+        if (el) el.addEventListener('click', (e) => { if (e.target.id === id) closeModal(id); });
     });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeTopModal(); });
 });
