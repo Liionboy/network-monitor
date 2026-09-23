@@ -215,7 +215,11 @@ function renderContainers(raw) {
     return '<div class="proc-block"><div class="proc-title">Containers</div>' + body + '</div>';
 }
 
-// ─── Dashboard ─────────────────────────────────────────────────────
+// ─── Dashboard ─────────────────────────────────────────────────
+
+function typeIcon(t) {
+    return { ssh: '💻', docker: '🐳', proxmox: '🧩', ssl: '🔒', ping: '📡', http: '🌐', https: '🌐', tcp: '🔌', host: '🏠' }[t] || '🖥️';
+}
 
 function renderDashboard() {
     const servers = currentStatus.servers || [];
@@ -223,10 +227,10 @@ function renderDashboard() {
     const withLatency = servers.filter(s => s.response_ms);
     const avgLatency = withLatency.length ? Math.round(withLatency.reduce((a, s) => a + s.response_ms, 0) / withLatency.length) : null;
     document.getElementById('stats-row').innerHTML =
-        '<div class="mini-stat"><strong>'+servers.length+'</strong><span>Total</span></div>'+
-        '<div class="mini-stat"><strong>'+online+'</strong><span>Online</span></div>'+
-        '<div class="mini-stat"><strong>'+(servers.length-online)+'</strong><span>Offline</span></div>'+
-        '<div class="mini-stat"><strong>'+(avgLatency!=null?avgLatency+' ms':'-')+'</strong><span>Avg latency</span></div>';
+        '<div class="mini-stat t-accent"><strong>'+servers.length+'</strong><span>Total</span></div>'+
+        '<div class="mini-stat t-green"><strong>'+online+'</strong><span>Online</span></div>'+
+        '<div class="mini-stat t-red"><strong>'+(servers.length-online)+'</strong><span>Offline</span></div>'+
+        '<div class="mini-stat t-amber"><strong>'+(avgLatency!=null?avgLatency+' ms':'-')+'</strong><span>Avg latency</span></div>';
     document.getElementById('last-update').textContent = currentStatus.timestamp_iso
         ? new Date(currentStatus.timestamp_iso).toLocaleTimeString('ro-RO') : '--:--:--';
 
@@ -237,9 +241,9 @@ function renderDashboard() {
         let m = '';
         if (s.check_type === 'ssh' && s.online) {
             m = '<div class="metrics-row">'+
-                '<div class="metric"><span class="metric-label">CPU</span><span class="metric-value">'+(s.cpu!=null?s.cpu.toFixed(1)+'%':'-')+'</span><div class="metric-bar"><i style="width:'+Math.min(100,s.cpu||0)+'%"></i></div></div>'+
-                '<div class="metric"><span class="metric-label">Memory</span><span class="metric-value">'+(s.ram_percent!=null?s.ram_percent.toFixed(1)+'%':'-')+'</span><div class="metric-bar"><i style="width:'+Math.min(100,s.ram_percent||0)+'%"></i></div></div>'+
-                '<div class="metric"><span class="metric-label">Disk</span><span class="metric-value">'+(s.disk_percent!=null?s.disk_percent.toFixed(1)+'%':'-')+'</span><div class="metric-bar"><i style="width:'+Math.min(100,s.disk_percent||0)+'%"></i></div></div></div>'+
+                '<div class="metric t-cpu"><span class="metric-label">CPU</span><span class="metric-value">'+(s.cpu!=null?s.cpu.toFixed(1)+'%':'-')+'</span><div class="metric-bar"><i style="width:'+Math.min(100,s.cpu||0)+'%"></i></div></div>'+
+                '<div class="metric t-mem"><span class="metric-label">Memory</span><span class="metric-value">'+(s.ram_percent!=null?s.ram_percent.toFixed(1)+'%':'-')+'</span><div class="metric-bar"><i style="width:'+Math.min(100,s.ram_percent||0)+'%"></i></div></div>'+
+                '<div class="metric t-disk"><span class="metric-label">Disk</span><span class="metric-value">'+(s.disk_percent!=null?s.disk_percent.toFixed(1)+'%':'-')+'</span><div class="metric-bar"><i style="width:'+Math.min(100,s.disk_percent||0)+'%"></i></div></div></div>'+
                 '<div class="info-row"><span>Uptime: <b>'+fmtUptime(s.uptime)+'</b></span><span>Load: <b>'+(s.load_1||'-')+' / '+(s.load_5||'-')+' / '+(s.load_15||'-')+'</b></span></div>'+
                 '<div class="info-row"><span>RAM: <b>'+fmtBytes(s.ram_used)+' / '+fmtBytes(s.ram_total)+'</b></span><span>Disk: <b>'+fmtBytes(s.disk_used)+' / '+fmtBytes(s.disk_total)+'</b></span></div>';
             if (s.bandwidth_rx || s.bandwidth_tx) {
@@ -272,7 +276,7 @@ function renderDashboard() {
             m += '<div class="info-row"><span>Health: <b>'+esc(s.health_path)+'</b>'+(s.expected_status?' → expect '+s.expected_status:'')+'</span></div>';
         }
         return '<div class="server-card '+(s.online?'online':'offline')+'">'+
-            '<div class="card-header"><div><div class="server-name">'+esc(s.name)+'</div><div class="server-host">'+esc(s.host)+'</div></div>'+
+            '<div class="card-header"><div class="card-id"><span class="type-ico t-'+esc(s.check_type)+'">'+typeIcon(s.check_type)+'</span><div><div class="server-name">'+esc(s.name)+'</div><div class="server-host">'+esc(s.host)+'</div></div></div>'+
             '<div class="badge '+(s.online?'ok':'bad')+'">'+(s.online?'ONLINE':'OFFLINE')+'</div></div>'+
             m+'<div class="detail-row"><span>Check</span><span>'+esc(s.check_type.toUpperCase())+'</span></div>'+
             '<div class="detail-row"><span>Latency</span><span>'+(s.response_ms?s.response_ms+' ms':'—')+'</span></div>'+
@@ -401,24 +405,24 @@ async function openHistory(sid) {
 
     let html = '';
     const respPairs = data.filter(d => d.response_ms != null).map(d => ({v: d.response_ms, ts: d.timestamp}));
-    if (respPairs.length) html += miniChart('Response Time (ms)', respPairs, Math.max(...respPairs.map(p=>p.v), 100), '#3b82f6', firstTime, lastTime, 'ms');
+    if (respPairs.length) html += miniChart('Response Time (ms)', respPairs, Math.max(...respPairs.map(p=>p.v), 100), '#22d3ee', firstTime, lastTime, 'ms');
     const cpuPairs = data.filter(d => d.cpu != null).map(d => ({v: d.cpu, ts: d.timestamp}));
     const cpuLabel = 'CPU %' + (cpuModel ? ' <span class="chart-hw-info">'+cpuModel+'</span>' : '');
-    if (cpuPairs.length) html += miniChart(cpuLabel, cpuPairs, 100, '#22c55e', firstTime, lastTime, '%');
+    if (cpuPairs.length) html += miniChart(cpuLabel, cpuPairs, 100, '#34d399', firstTime, lastTime, '%');
     const ramPairs = data.filter(d => d.ram_percent != null).map(d => ({v: d.ram_percent, ts: d.timestamp}));
     const ramLabel = 'RAM %' + (ramTotalGB ? ' <span class="chart-hw-info">'+ramTotalGB+' GB total</span>' : '');
-    if (ramPairs.length) html += miniChart(ramLabel, ramPairs, 100, '#f59e0b', firstTime, lastTime, '%');
+    if (ramPairs.length) html += miniChart(ramLabel, ramPairs, 100, '#a78bfa', firstTime, lastTime, '%');
     // Ping chart
     const pingPairs = data.filter(d => d.ping_ms != null).map(d => ({v: d.ping_ms, ts: d.timestamp}));
-    if (pingPairs.length) html += miniChart('Ping (ms)', pingPairs, Math.max(...pingPairs.map(p=>p.v), 10), '#a855f7', firstTime, lastTime, 'ms');
+    if (pingPairs.length) html += miniChart('Ping (ms)', pingPairs, Math.max(...pingPairs.map(p=>p.v), 10), '#f472b6', firstTime, lastTime, 'ms');
     // SSL days chart
     const sslPairs = data.filter(d => d.ssl_days != null).map(d => ({v: d.ssl_days, ts: d.timestamp}));
-    if (sslPairs.length) html += miniChart('SSL Expiry (days)', sslPairs, 365, '#06b6d4', firstTime, lastTime, ' days');
+    if (sslPairs.length) html += miniChart('SSL Expiry (days)', sslPairs, 365, '#fbbf24', firstTime, lastTime, ' days');
     // Bandwidth charts
     const bwRxPairs = data.filter(d => d.bandwidth_rx != null).map(d => ({v: d.bandwidth_rx, ts: d.timestamp}));
-    if (bwRxPairs.length) html += miniChart('↓ RX Bandwidth (B/s)', bwRxPairs, Math.max(...bwRxPairs.map(p=>p.v), 1000), '#3b82f6', firstTime, lastTime, 'B/s');
+    if (bwRxPairs.length) html += miniChart('↓ RX Bandwidth (B/s)', bwRxPairs, Math.max(...bwRxPairs.map(p=>p.v), 1000), '#22d3ee', firstTime, lastTime, 'B/s');
     const bwTxPairs = data.filter(d => d.bandwidth_tx != null).map(d => ({v: d.bandwidth_tx, ts: d.timestamp}));
-    if (bwTxPairs.length) html += miniChart('↑ TX Bandwidth (B/s)', bwTxPairs, Math.max(...bwTxPairs.map(p=>p.v), 1000), '#f97316', firstTime, lastTime, 'B/s');
+    if (bwTxPairs.length) html += miniChart('↑ TX Bandwidth (B/s)', bwTxPairs, Math.max(...bwTxPairs.map(p=>p.v), 1000), '#fb923c', firstTime, lastTime, 'B/s');
 
     body.innerHTML = html || '<div class="empty">No metrics data.</div>';
 }
