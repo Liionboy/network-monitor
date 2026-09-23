@@ -10,6 +10,7 @@ SSL expiry, ping, Docker monitoring, bandwidth tracking.
 import asyncio
 import base64
 import hashlib
+import http.client
 import json
 import logging
 import os
@@ -682,6 +683,117 @@ async def check_proxmox(target: str | None, host: str, port: int | None, token: 
     except asyncio.TimeoutError:
         return {"online": False, "response_ms": None, "detail": "Proxmox API timeout"}
     except (aiohttp.ClientError, KeyError, TypeError, ValueError, RuntimeError) as exc:
+        return {"online": False, "response_ms": None, "detail": str(exc)[:160]}
+
+
+def proxmox_url(target: str | None, host: str, port: int | None) -> str:
+    value = (target or f"https://{host}:{port or 8006}").strip()
+    if not urlparse(value).scheme:
+        value = "https://" + value
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Proxmox target must be an HTTP(S) URL")
+    return value.rstrip("/")
+
+
+def proxmox_auth_header(token: str) -> str:
+    token = (token or "").strip()
+    if "=" not in token or "!" not in token.split("=", 1)[0]:
+        raise ValueError("Proxmox token must use user@realm!tokenid=uuid format")
+    return "PVEAPIToken=" + token
+
+
+async def check_proxmox(target: str | None, host: str, port: int | None, token: str, verify_tls: bool = True):
+    """Read Proxmox node, VM and container state through the official API."""
+    try:
+        base_url = proxmox_url(target, host, port)
+        headers = {"Authorization": proxmox_auth_header(token)}
+        timeout = aiohttp.ClientTimeout(total=15)
+        connector = aiohttp.TCPConnector(ssl=verify_tls)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers, connector=connector) as session:
+            started = time.time()
+
+            async def get_json(path):
+                async with session.get(base_url + "/api2/json" + path) as response:
+                    payload = await response.json(content_type=None)
+                    if response.status >= 400:
+                        message = payload.get("errors") if isinstance(payload, dict) else payload
+                        raise RuntimeError(f"Proxmox API HTTP {response.status}: {message}")
+                    return payload.get("data", payload) if isinstance(payload, dict) else payload
+
+            node_rows = await get_json("/nodes")
+            nodes = []
+            vms_total = vms_running = lxc_total = lxc_running = 0
+            memory_used = memory_total = disk_used = disk_total = 0
+            cpu_values = []
+            load_values = []
+            uptime_values = []
+            for node in node_rows if isinstance(node_rows, list) else []:
+                node_name = str(node.get("node", ""))
+                if not node_name:
+                    continue
+                safe_node = quote(node_name, safe="")
+                status = await get_json(f"/nodes/{safe_node}/status")
+                qemu = await get_json(f"/nodes/{safe_node}/qemu")
+                lxc = await get_json(f"/nodes/{safe_node}/lxc")
+                node_status = str(status.get("status", node.get("status", "unknown"))).lower()
+                vms = qemu if isinstance(qemu, list) else []
+                containers = lxc if isinstance(lxc, list) else []
+                vms_total += len(vms)
+                vms_running += sum(1 for item in vms if item.get("status") == "running")
+                lxc_total += len(containers)
+                lxc_running += sum(1 for item in containers if item.get("status") == "running")
+                memory = status.get("memory") or {}
+                rootfs = status.get("rootfs") or {}
+                memory_used += int(memory.get("used") or 0)
+                memory_total += int(memory.get("total") or 0)
+                disk_used += int(rootfs.get("used") or 0)
+                disk_total += int(rootfs.get("total") or 0)
+                if status.get("cpu") is not None:
+                    cpu_values.append(float(status["cpu"]) * 100)
+                load = status.get("loadavg") or []
+                if isinstance(load, list) and load:
+                    load_values.append(float(load[0]))
+                if status.get("uptime") is not None:
+                    uptime_values.append(float(status["uptime"]))
+                nodes.append({
+                    "node": node_name,
+                    "status": node_status,
+                    "cpu": round(float(status.get("cpu") or 0) * 100, 1),
+                    "memory_used": memory.get("used"),
+                    "memory_total": memory.get("total"),
+                    "uptime": status.get("uptime"),
+                })
+
+            online_nodes = sum(1 for node in nodes if node["status"] == "online")
+            if not nodes:
+                raise RuntimeError("No Proxmox nodes returned")
+            ram_percent = round(memory_used / memory_total * 100, 1) if memory_total else None
+            disk_percent = round(disk_used / disk_total * 100, 1) if disk_total else None
+            return {
+                "online": online_nodes > 0,
+                "response_ms": round((time.time() - started) * 1000, 1),
+                "cpu": round(sum(cpu_values) / len(cpu_values), 1) if cpu_values else None,
+                "ram_used": memory_used or None,
+                "ram_total": memory_total or None,
+                "ram_percent": ram_percent,
+                "disk_used": disk_used or None,
+                "disk_total": disk_total or None,
+                "disk_percent": disk_percent,
+                "uptime": max(uptime_values) if uptime_values else None,
+                "load_1": round(sum(load_values) / len(load_values), 2) if load_values else None,
+                "proxmox_nodes": nodes,
+                "proxmox_online_nodes": online_nodes,
+                "proxmox_node_count": len(nodes),
+                "proxmox_vms_total": vms_total,
+                "proxmox_vms_running": vms_running,
+                "proxmox_lxc_total": lxc_total,
+                "proxmox_lxc_running": lxc_running,
+                "detail": f"{online_nodes}/{len(nodes)} nodes online; {vms_running}/{vms_total} VMs; {lxc_running}/{lxc_total} containers",
+            }
+    except asyncio.TimeoutError:
+        return {"online": False, "response_ms": None, "detail": "Proxmox API timeout"}
+    except Exception as exc:
         return {"online": False, "response_ms": None, "detail": str(exc)[:160]}
 
 
