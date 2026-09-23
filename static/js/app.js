@@ -161,6 +161,60 @@ function fmtBandwidth(bps) {
     return bps.toFixed(0) + ' B/s';
 }
 
+// ─── Process / container lists ─────────────────────────────────
+
+function renderProcesses(raw) {
+    const rows = [];
+    String(raw || '').split('\n').forEach(line => {
+        const p = line.trim().split(/\s+/);
+        if (p.length >= 4 && !isNaN(p[0]) && !isNaN(p[1]) && !isNaN(p[2])) {
+            rows.push({ pid: p[0], cpu: parseFloat(p[1]), mem: parseFloat(p[2]), cmd: p.slice(3).join(' ') });
+        }
+    });
+    if (!rows.length) return '';
+    const maxCpu = Math.max(...rows.map(r => r.cpu), 1);
+    return '<div class="proc-block"><div class="proc-title">Top processes</div><div class="proc-list">' +
+        rows.slice(0, 5).map((r, i) => {
+            const name = r.cmd.split('/').pop() || r.cmd;
+            return '<div class="proc-row">' +
+                '<span class="proc-rank">' + (i + 1) + '</span>' +
+                '<div class="proc-info"><span class="proc-name" title="' + esc(r.cmd) + '">' + esc(name) + '</span>' +
+                '<span class="proc-meta">PID ' + esc(r.pid) + ' &middot; ' + r.mem.toFixed(1) + '% mem</span></div>' +
+                '<div class="proc-right"><span class="proc-cpu">' + r.cpu.toFixed(1) + '%</span>' +
+                '<div class="proc-bar"><i style="width:' + Math.min(100, (r.cpu / maxCpu) * 100) + '%"></i></div></div>' +
+                '</div>';
+        }).join('') + '</div></div>';
+}
+
+function renderContainers(raw) {
+    const lines = String(raw || '').split('\n').map(l => l.trim()).filter(Boolean);
+    let body;
+    if (!lines.length) {
+        body = '<div class="empty">No containers</div>';
+    } else {
+        body = '<div class="proc-list">' + lines.slice(0, 10).map(line => {
+            let name = line, state = '', status = '';
+            const ci = line.indexOf(': ');
+            if (ci > -1) {
+                name = line.slice(0, ci);
+                const rest = line.slice(ci + 2);
+                const sp = rest.indexOf(' ');
+                state = sp > -1 ? rest.slice(0, sp) : rest;
+                status = sp > -1 ? rest.slice(sp + 1) : '';
+                if (status.charAt(0) === '(' && status.charAt(status.length - 1) === ')') status = status.slice(1, -1);
+            }
+            const on = state === 'running';
+            return '<div class="proc-row">' +
+                '<span class="status-dot' + (on ? ' on' : '') + '"></span>' +
+                '<div class="proc-info"><span class="proc-name">' + esc(name) + '</span>' +
+                (status ? '<span class="proc-meta">' + esc(status) + '</span>' : '') + '</div>' +
+                '<span class="proc-state' + (on ? ' ok' : '') + '">' + esc(state) + '</span>' +
+                '</div>';
+        }).join('') + '</div>';
+    }
+    return '<div class="proc-block"><div class="proc-title">Containers</div>' + body + '</div>';
+}
+
 // ─── Dashboard ─────────────────────────────────────────────────────
 
 function renderDashboard() {
@@ -192,7 +246,7 @@ function renderDashboard() {
                 m += '<div class="info-row"><span>↓ <b>'+fmtBandwidth(s.bandwidth_rx)+'</b></span><span>↑ <b>'+fmtBandwidth(s.bandwidth_tx)+'</b></span></div>';
             }
             if (s.top_processes) {
-                m += '<div class="info-row" style="max-height:60px;overflow-y:auto;font-size:11px;font-family:monospace;white-space:pre;color:#94a3b8;background:#0f172a;padding:4px 8px;border-radius:6px;margin-top:4px;">'+esc(s.top_processes)+'</div>';
+                m += renderProcesses(s.top_processes);
             }
         } else if (s.check_type === 'ssl' && s.online) {
             const days = s.ssl_days;
@@ -203,7 +257,7 @@ function renderDashboard() {
             m = '<div class="metrics-row">'+
                 '<div class="metric"><span class="metric-label">Latency</span><span class="metric-value">'+(s.ping_ms?s.ping_ms.toFixed(1)+' ms':'-')+'</span></div></div>';
         } else if (s.check_type === 'docker' && s.online) {
-            m = '<div class="info-row" style="max-height:100px;overflow-y:auto;font-size:11px;font-family:monospace;white-space:pre;color:#94a3b8;background:#0f172a;padding:8px;border-radius:6px;margin-top:4px;">'+esc(s.docker_status || 'No containers')+'</div>';
+            m = renderContainers(s.docker_status || '');
         } else if (s.check_type === 'proxmox' && s.online) {
             m = '<div class="metrics-row">'+
                 '<div class="metric"><span class="metric-label">Nodes</span><span class="metric-value">'+(s.proxmox_online_nodes||0)+'/'+(s.proxmox_node_count||0)+'</span></div>'+

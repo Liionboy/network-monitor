@@ -164,6 +164,57 @@ body {
 .metric-bar { height: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); margin-top: 7px; overflow: hidden; }
 .metric-bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.4s ease; }
 
+/* ── Process & container lists ── */
+.proc-block { margin-top: 12px; }
+.proc-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 6px;
+}
+.proc-list { display: grid; gap: 2px; max-height: 200px; overflow-y: auto; }
+.proc-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  transition: background 0.15s;
+}
+.proc-row:hover { background: rgba(255, 255, 255, 0.03); }
+.proc-rank {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.proc-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.proc-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proc-meta { font-family: var(--mono); font-size: 10px; color: var(--faint); }
+.proc-right { width: 92px; flex-shrink: 0; text-align: right; }
+.proc-cpu { display: block; font-family: var(--mono); font-size: 11.5px; font-weight: 500; }
+.proc-bar {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  margin-top: 4px;
+  overflow: hidden;
+}
+.proc-bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.4s ease; }
+.proc-state { flex-shrink: 0; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+.proc-state.ok { color: var(--green); }
+
 .info-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 12.5px; color: var(--dim); }
 .info-row b { color: var(--text); font-family: var(--mono); font-weight: 500; font-size: 12px; }
 .detail-row, .list-item {
